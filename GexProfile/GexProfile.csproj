@@ -1,0 +1,28 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0-windows</TargetFramework>
+    <UseWindowsForms>true</UseWindowsForms>
+    <Nullable>disable</Nullable>
+    <ImplicitUsings>disable</ImplicitUsings>
+    <LangVersion>latest</LangVersion>
+    <RootNamespace>GexProfile</RootNamespace>
+    <AssemblyName>GexProfile</AssemblyName>
+
+    <!-- Quantower install. Override on the command line if yours differs: dotnet build -p:QuantowerVersion=v1.148.0 -->
+    <QuantowerRoot Condition="'$(QuantowerRoot)' == ''">C:\Quantower</QuantowerRoot>
+    <QuantowerVersion Condition="'$(QuantowerVersion)' == ''">v1.147.9</QuantowerVersion>
+
+    <!-- Build straight into Quantower's indicator scripts folder so it shows up in the indicator list. -->
+    <AppendTargetFrameworkToOutputPath>false</AppendTargetFrameworkToOutputPath>
+    <OutputPath>$(QuantowerRoot)\Settings\Scripts\Indicators\GexProfile\</OutputPath>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Reference Include="TradingPlatform.BusinessLayer">
+      <HintPath>$(QuantowerRoot)\TradingPlatform\$(QuantowerVersion)\bin\TradingPlatform.BusinessLayer.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+  </ItemGroup>
+
+</Project>
