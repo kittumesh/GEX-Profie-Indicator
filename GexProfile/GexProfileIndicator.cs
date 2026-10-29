@@ -336,7 +336,8 @@ namespace GexProfile
             {
                 if (candidate == null)
                     continue;
-                var list = Core.Instance.GetOptionSeries(candidate)?.Where(s => s != null).ToList();
+                // CME event contracts (ECG…) come back as option series too; they are binaries, not gamma-bearing options.
+                var list = Core.Instance.GetOptionSeries(candidate)?.Where(s => s != null && s.SerieType != OptionSerieType.BinaryContracts).ToList();
                 if (list == null || list.Count == 0)
                     continue;
                 // Asked via the futures root we may get options on every contract month; prefer the chart's contract.
