@@ -25,6 +25,10 @@ namespace GexProfile
         private const double MinDaysToExpiry = 15.0 / 1440.0;
         private const int LabelsPerSide = 3;
 
+        // In Auto expiration mode, an expiry whose OI is still all zero this long after loading is skipped (new listings have no OI until CME publishes it).
+        private static readonly TimeSpan EmptyExpiryGrace = TimeSpan.FromSeconds(20);
+        private const int MaxEmptySkips = 3;
+
         #region Settings
 
         [InputParameter("Source", 10, variants: new object[] { "Open Interest", SourceOpenInterest, "Day Volume (live positioning)", SourceDayVolume })]
@@ -117,6 +121,7 @@ namespace GexProfile
             public List<(double strike, double value)> CallWalls, PutWalls;
             public string Header;
             public bool HasData;
+            public DateTime FirstExpiryUtc;
         }
 
         private readonly List<Leg> legs = new();
@@ -128,6 +133,9 @@ namespace GexProfile
         private volatile string status;
         private bool sampleLogged;
         private DateTime loadedAt;
+        private bool active;
+        private int emptySkips;
+        private volatile bool hasLaterExpiry;
 
         public GexProfileIndicator()
         {
@@ -141,6 +149,25 @@ namespace GexProfile
 
         protected override void OnInit()
         {
+            lock (legs)
+            {
+                active = true;
+                emptySkips = 0;
+                StartLoad();
+            }
+        }
+
+        protected override void OnClear()
+        {
+            lock (legs)
+            {
+                active = false;
+                Teardown();
+            }
+        }
+
+        private void StartLoad()
+        {
             status = "Loading option chain…";
             sampleLogged = false;
             cts = new CancellationTokenSource();
@@ -148,7 +175,20 @@ namespace GexProfile
             Task.Run(() => LoadChain(token), token);
         }
 
-        protected override void OnClear()
+        // Drops the current chain and loads it again, e.g. to move past an empty or expired expiry.
+        private void Reload()
+        {
+            lock (legs)
+            {
+                if (!active)
+                    return;
+                Teardown();
+                StartLoad();
+            }
+            CurrentChart?.RedrawBuffer();
+        }
+
+        private void Teardown()
         {
             cts?.Cancel();
             lock (legs)
@@ -190,13 +230,14 @@ namespace GexProfile
                 }
 
                 var nowUtc = DateTime.UtcNow;
-                var expiries = series
+                var upcoming = series
                     .GroupBy(s => s.ExpirationDate.Date)
                     .Where(g => ExpiryUtc(g.First().ExpirationDate) > nowUtc)
                     .OrderBy(g => g.Key)
-                    .Skip(Expiration)
-                    .Take(Math.Max(1, Aggregate))
                     .ToList();
+                int skip = Expiration + emptySkips;
+                var expiries = upcoming.Skip(skip).Take(Math.Max(1, Aggregate)).ToList();
+                hasLaterExpiry = upcoming.Count > skip + expiries.Count;
                 if (expiries.Count == 0)
                 {
                     status = "No upcoming expirations";
@@ -343,6 +384,11 @@ namespace GexProfile
                     sampleLogged = true;
                     LogSample();
                 }
+                if (Expiration == 0 && NeedsNextExpiry(snap))
+                {
+                    Reload();
+                    return;
+                }
                 CurrentChart?.RedrawBuffer();
             }
             catch (Exception ex)
@@ -353,6 +399,25 @@ namespace GexProfile
             {
                 Interlocked.Exchange(ref computing, 0);
             }
+        }
+
+        // Auto expiration: roll forward once the shown expiry has passed, or skip it while it has no open interest.
+        private bool NeedsNextExpiry(Snapshot snap)
+        {
+            var now = DateTime.UtcNow;
+            if (now > snap.FirstExpiryUtc)
+            {
+                Log($"expiry {snap.FirstExpiryUtc:yyyy-MM-dd HH:mm} UTC has passed, reloading");
+                emptySkips = 0;
+                return true;
+            }
+            if (!snap.HasData && Source == SourceOpenInterest && hasLaterExpiry && emptySkips < MaxEmptySkips && now - loadedAt > EmptyExpiryGrace)
+            {
+                Log($"no open interest on expiry {snap.FirstExpiryUtc:yyyy-MM-dd} yet, moving to the next one");
+                emptySkips++;
+                return true;
+            }
+            return false;
         }
 
         private Snapshot Compute()
@@ -443,6 +508,7 @@ namespace GexProfile
                 PutWalls = list.Where(r => putMeasure(r) < 0).OrderBy(putMeasure).Take(WallsPerSide).Select(r => (r.Strike, putMeasure(r))).ToList(),
                 Header = $"{date} · {dte} DTE · {n} opts · MP {FormatStrike(maxPain)}",
                 HasData = qty.Any(q => q > 0),
+                FirstExpiryUtc = first,
             };
         }
 
