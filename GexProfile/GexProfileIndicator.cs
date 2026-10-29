@@ -20,6 +20,7 @@ namespace GexProfile
         private const int SourceOpenInterest = 0, SourceDayVolume = 1;
         private const int HistogramNet = 0, HistogramSplit = 1;
         private const int PositionRight = 0, PositionLeft = 1;
+        private const int ExpiryNearest = 0, ExpiryWeek = 1, ExpiryMonth = 2;
 
         // Options that have expired (or are about to) still get a little time value so gamma stays finite.
         private const double MinDaysToExpiry = 15.0 / 1440.0;
@@ -49,11 +50,8 @@ namespace GexProfile
         [InputParameter("Profile width (%)", 60, 5, 80, 1, 0)]
         public int ProfileWidth = 30;
 
-        [InputParameter("Expiration", 70, variants: new object[] { "Auto (nearest)", 0, "2nd nearest", 1, "3rd nearest", 2, "4th nearest", 3 })]
-        public int Expiration = 0;
-
-        [InputParameter("Aggregate expirations", 80, 1, 10, 1, 0)]
-        public int Aggregate = 1;
+        [InputParameter("Expiration", 70, variants: new object[] { "Auto (nearest)", ExpiryNearest, "This week", ExpiryWeek, "This month (to monthly OG)", ExpiryMonth })]
+        public int Expiration = ExpiryNearest;
 
         [InputParameter("Strikes per side", 90, 1, 500, 1, 0)]
         public int StrikesPerSide = 50;
@@ -70,7 +68,6 @@ namespace GexProfile
             ["Position"] = "Profile",
             ["Profile width (%)"] = "Profile",
             ["Expiration"] = "Options",
-            ["Aggregate expirations"] = "Options",
             ["Strikes per side"] = "Options",
             ["Wide range (all strikes)"] = "Options",
         };
@@ -235,13 +232,39 @@ namespace GexProfile
                     .Where(g => ExpiryUtc(g.First().ExpirationDate) > nowUtc)
                     .OrderBy(g => g.Key)
                     .ToList();
-                int skip = Expiration + emptySkips;
-                var expiries = upcoming.Skip(skip).Take(Math.Max(1, Aggregate)).ToList();
-                hasLaterExpiry = upcoming.Count > skip + expiries.Count;
-                if (expiries.Count == 0)
+                if (upcoming.Count == 0)
                 {
                     status = "No upcoming expirations";
                     return;
+                }
+
+                List<IGrouping<DateTime, OptionSerie>> expiries;
+                if (Expiration == ExpiryWeek)
+                {
+                    // Everything up to the end of the nearest expiry's Mon–Fri week; once Friday has expired that is next week.
+                    var first = upcoming[0].Key;
+                    var nextMonday = first.AddDays(7 - ((int)first.DayOfWeek + 6) % 7);
+                    expiries = upcoming.Where(g => g.Key < nextMonday).ToList();
+                }
+                else if (Expiration == ExpiryMonth)
+                {
+                    var monthly = upcoming.FirstOrDefault(g => g.Any(IsMonthly));
+                    if (monthly == null)
+                    {
+                        status = $"No monthly expiry left on {chartSymbol.Name}";
+                        return;
+                    }
+                    expiries = upcoming.Where(g => g.Key <= monthly.Key).ToList();
+                }
+                else
+                {
+                    expiries = upcoming.Skip(emptySkips).Take(1).ToList();
+                    hasLaterExpiry = upcoming.Count > emptySkips + 1;
+                    if (expiries.Count == 0)
+                    {
+                        status = "No upcoming expirations";
+                        return;
+                    }
                 }
 
                 // Several series can share a date; use the one with the biggest chain so nothing is counted twice.
@@ -347,6 +370,9 @@ namespace GexProfile
             return new List<OptionSerie>();
         }
 
+        // The monthly series is the bare root ("OG"); weeklies carry a week number ("OG1", "G2M", …).
+        private static bool IsMonthly(OptionSerie s) => !string.IsNullOrEmpty(s.Name) && !s.Name.Any(char.IsDigit);
+
         private void Subscribe(Symbol s)
         {
             s.NewQuote += OnQuote;
@@ -385,7 +411,7 @@ namespace GexProfile
                     sampleLogged = true;
                     LogSample();
                 }
-                if (Expiration == 0 && NeedsNextExpiry(snap))
+                if (NeedsNextExpiry(snap))
                 {
                     Reload();
                     return;
@@ -402,7 +428,8 @@ namespace GexProfile
             }
         }
 
-        // Auto expiration: roll forward once the shown expiry has passed, or skip it while it has no open interest.
+        // Reload once the nearest loaded expiry has passed (drops it from This week / This month, rolls Auto forward).
+        // Auto also skips an expiry that still has no open interest.
         private bool NeedsNextExpiry(Snapshot snap)
         {
             var now = DateTime.UtcNow;
@@ -412,7 +439,7 @@ namespace GexProfile
                 emptySkips = 0;
                 return true;
             }
-            if (!snap.HasData && Source == SourceOpenInterest && hasLaterExpiry && emptySkips < MaxEmptySkips && now - loadedAt > EmptyExpiryGrace)
+            if (Expiration == ExpiryNearest && !snap.HasData && Source == SourceOpenInterest && hasLaterExpiry && emptySkips < MaxEmptySkips && now - loadedAt > EmptyExpiryGrace)
             {
                 Log($"no open interest on expiry {snap.FirstExpiryUtc:yyyy-MM-dd} yet, moving to the next one");
                 emptySkips++;
