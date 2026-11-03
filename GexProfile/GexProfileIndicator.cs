@@ -119,6 +119,7 @@ namespace GexProfile
             public double GammaFlip;
             public List<(double strike, double value)> CallWalls, PutWalls;
             public string Header;
+            public double TotalGex;
             public bool HasData;
             public DateTime FirstExpiryUtc;
         }
@@ -540,7 +541,8 @@ namespace GexProfile
                 GammaFlip = gammaFlip,
                 CallWalls = list.Where(r => callMeasure(r) > 0).OrderByDescending(callMeasure).Take(WallsPerSide).Select(r => (r.Strike, callMeasure(r))).ToList(),
                 PutWalls = list.Where(r => putMeasure(r) < 0).OrderBy(putMeasure).Take(WallsPerSide).Select(r => (r.Strike, putMeasure(r))).ToList(),
-                Header = $"{date} · {dte} DTE · {n} opts · MP {FormatStrike(maxPain)}",
+                Header = $"{date} · {dte} DTE · {n} opts",
+                TotalGex = list.Sum(r => r.NetGex),
                 HasData = qty.Any(q => q > 0),
                 FirstExpiryUtc = first,
             };
@@ -649,7 +651,10 @@ namespace GexProfile
                 var conv = chart.MainWindow.CoordinatesConverter;
                 DrawHistogram(g, rect, conv, snap);
                 DrawLevels(g, rect, conv, snap);
-                DrawHeader(g, rect, snap.HasData ? snap.Header : status ?? snap.Header, snap.HasData ? CallColor : Color.Orange);
+                if (snap.HasData)
+                    DrawHeader(g, rect, snap.Header + " · ", CallColor, "Σ " + GexMath.FormatGex(snap.TotalGex), snap.TotalGex >= 0 ? CallColor : PutColor);
+                else
+                    DrawHeader(g, rect, status ?? snap.Header, Color.Orange);
             }
             finally
             {
@@ -760,16 +765,24 @@ namespace GexProfile
             g.DrawString(tag, LabelFont, text, box.X + 4, box.Y + 2);
         }
 
-        private static void DrawHeader(Graphics g, Rectangle rect, string text, Color dot)
+        // Right-aligned status line with a dot; the optional suffix (total GEX) is drawn in its own colour.
+        private static void DrawHeader(Graphics g, Rectangle rect, string text, Color dot, string suffix = null, Color suffixColor = default)
         {
             if (string.IsNullOrEmpty(text))
                 return;
-            var size = g.MeasureString(text, HeaderFont);
-            float x = rect.Right - size.Width - 12, y = rect.Top + 8;
+            using var format = (StringFormat)StringFormat.GenericTypographic.Clone();
+            format.FormatFlags |= StringFormatFlags.MeasureTrailingSpaces;
+            var size = g.MeasureString(text, HeaderFont, PointF.Empty, format);
+            var suffixSize = suffix == null ? SizeF.Empty : g.MeasureString(suffix, HeaderFont, PointF.Empty, format);
+            float x = rect.Right - size.Width - suffixSize.Width - 12, y = rect.Top + 8;
             using (var dotBrush = new SolidBrush(dot))
                 g.FillEllipse(dotBrush, x - 12, y + size.Height / 2 - 3.5f, 7, 7);
-            using var brush = new SolidBrush(TextColor);
-            g.DrawString(text, HeaderFont, brush, x, y);
+            using (var brush = new SolidBrush(TextColor))
+                g.DrawString(text, HeaderFont, brush, x, y, format);
+            if (suffix == null)
+                return;
+            using var suffixBrush = new SolidBrush(suffixColor);
+            g.DrawString(suffix, HeaderFont, suffixBrush, x + size.Width, y, format);
         }
 
         private static void FillRoundedBar(Graphics g, Brush brush, float x, float y, float w, float h)
