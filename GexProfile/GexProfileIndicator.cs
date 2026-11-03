@@ -8,6 +8,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using TradingPlatform.BusinessLayer;
 using TradingPlatform.BusinessLayer.Chart;
+using TradingPlatform.BusinessLayer.Utils;
 
 namespace GexProfile
 {
@@ -50,14 +51,47 @@ namespace GexProfile
         [InputParameter("Profile width (%)", 60, 5, 80, 1, 0)]
         public int ProfileWidth = 30;
 
+        [InputParameter("Positive GEX color", 62)]
+        public Color PositiveColor = Color.FromArgb(0, 209, 160);
+
+        [InputParameter("Negative GEX color", 64)]
+        public Color NegativeColor = Color.FromArgb(150, 80, 230);
+
+        [InputParameter("Node thickness (% of strike spacing)", 66, 10, 100, 1, 0)]
+        public int NodeThickness = 65;
+
         [InputParameter("Expiration", 70, variants: new object[] { "Auto (nearest)", ExpiryNearest, "This week", ExpiryWeek, "This month (to monthly OG)", ExpiryMonth })]
         public int Expiration = ExpiryNearest;
 
         [InputParameter("Strikes per side", 90, 1, 500, 1, 0)]
-        public int StrikesPerSide = 50;
+        public int StrikesPerSide = 30;
 
         [InputParameter("Wide range (all strikes)", 100)]
         public bool WideRange = false;
+
+        [InputParameter("Call wall", 110)]
+        public LineOptions CallWallLine = Level(Color.FromArgb(0, 209, 160), LineStyle.Solid);
+
+        [InputParameter("Put wall", 120)]
+        public LineOptions PutWallLine = Level(Color.FromArgb(150, 80, 230), LineStyle.Solid);
+
+        [InputParameter("Peak gamma", 130)]
+        public LineOptions PeakGammaLine = Level(Color.FromArgb(60, 140, 255), LineStyle.Solid);
+
+        [InputParameter("Gamma flip", 140)]
+        public LineOptions GammaFlipLine = Level(Color.FromArgb(255, 150, 40), LineStyle.Dash);
+
+        [InputParameter("Max pain", 150)]
+        public LineOptions MaxPainLine = Level(Color.FromArgb(230, 72, 72), LineStyle.Dash);
+
+        private static LineOptions Level(Color color, LineStyle style) => new()
+        {
+            Color = color,
+            Width = 1,
+            LineStyle = style,
+            WithCheckBox = true,
+            Enabled = true,
+        };
 
         private static readonly Dictionary<string, string> SettingGroups = new()
         {
@@ -67,6 +101,14 @@ namespace GexProfile
             ["Wall labels"] = "GEX",
             ["Position"] = "Profile",
             ["Profile width (%)"] = "Profile",
+            ["Positive GEX color"] = "Profile",
+            ["Negative GEX color"] = "Profile",
+            ["Node thickness (% of strike spacing)"] = "Profile",
+            ["Call wall"] = "Levels",
+            ["Put wall"] = "Levels",
+            ["Peak gamma"] = "Levels",
+            ["Gamma flip"] = "Levels",
+            ["Max pain"] = "Levels",
             ["Expiration"] = "Options",
             ["Strikes per side"] = "Options",
             ["Wide range (all strikes)"] = "Options",
@@ -81,7 +123,8 @@ namespace GexProfile
                 {
                     ["GEX"] = new SettingItemSeparatorGroup("GEX", 0),
                     ["Profile"] = new SettingItemSeparatorGroup("Profile", 1),
-                    ["Options"] = new SettingItemSeparatorGroup("Options", 2),
+                    ["Levels"] = new SettingItemSeparatorGroup("Levels", 2),
+                    ["Options"] = new SettingItemSeparatorGroup("Options", 3),
                 };
                 foreach (var item in settings)
                     if (SettingGroups.TryGetValue(item.Name, out var group))
@@ -93,11 +136,9 @@ namespace GexProfile
 
         #endregion
 
-        private static readonly Color CallColor = Color.FromArgb(0, 209, 160);
-        private static readonly Color PutColor = Color.FromArgb(150, 80, 230);
-        private static readonly Color MaxPainColor = Color.FromArgb(230, 72, 72);
-        private static readonly Color PeakGammaColor = Color.FromArgb(60, 140, 255);
-        private static readonly Color GammaFlipColor = Color.FromArgb(255, 150, 40);
+        private static readonly Color StatusColor = Color.FromArgb(0, 209, 160);
+        private static readonly Color PositiveTextColor = Color.FromArgb(70, 210, 110);
+        private static readonly Color NegativeTextColor = Color.FromArgb(240, 80, 80);
         private static readonly Color TextColor = Color.FromArgb(220, 224, 230);
         private static readonly Color AxisColor = Color.FromArgb(90, 128, 128, 140);
         private static readonly Font LabelFont = new("Segoe UI", 8f);
@@ -658,7 +699,7 @@ namespace GexProfile
                 DrawHistogram(g, rect, conv, snap);
                 DrawLevels(g, rect, conv, snap);
                 if (snap.HasData)
-                    DrawHeader(g, rect, snap.Header + " · ", CallColor, "Σ " + GexMath.FormatGex(snap.TotalGex), snap.TotalGex >= 0 ? CallColor : PutColor);
+                    DrawHeader(g, rect, snap.Header + " · ", StatusColor, "Σ " + GexMath.FormatGex(snap.TotalGex), snap.TotalGex >= 0 ? PositiveTextColor : NegativeTextColor);
                 else
                     DrawHeader(g, rect, status ?? snap.Header, Color.Orange);
             }
@@ -685,7 +726,7 @@ namespace GexProfile
             if (snap.StrikeStep > 0)
             {
                 double y0 = conv.GetChartY(snap.Rows[0].Strike), y1 = conv.GetChartY(snap.Rows[0].Strike + snap.StrikeStep);
-                thickness = (float)Math.Clamp(Math.Abs(y1 - y0) * 0.65, 2, 20);
+                thickness = (float)Math.Clamp(Math.Abs(y1 - y0) * NodeThickness / 100.0, 1, 60);
             }
 
             using (var axisPen = new Pen(AxisColor))
@@ -699,8 +740,8 @@ namespace GexProfile
                 bars.Where(b => b.value > 0).OrderByDescending(b => b.value).Take(LabelsPerSide)
                     .Concat(bars.Where(b => b.value < 0).OrderBy(b => b.value).Take(LabelsPerSide)));
 
-            using var callBrush = new SolidBrush(CallColor);
-            using var putBrush = new SolidBrush(PutColor);
+            using var callBrush = new SolidBrush(PositiveColor);
+            using var putBrush = new SolidBrush(NegativeColor);
             using var textBrush = new SolidBrush(TextColor);
             using var darkBrush = new SolidBrush(Color.FromArgb(20, 24, 32));
 
@@ -733,31 +774,34 @@ namespace GexProfile
         {
             var tags = new List<RectangleF>();
             if (!double.IsNaN(snap.PeakGammaStrike))
-                DrawLevel(g, rect, conv, tags, snap.PeakGammaStrike, PeakGammaColor, false, $"PEAK GAMMA {FormatStrike(snap.PeakGammaStrike)} · {GexMath.FormatGex(snap.PeakGamma).TrimStart('+')}");
+                DrawLevel(g, rect, conv, tags, snap.PeakGammaStrike, PeakGammaLine, $"PEAK GAMMA {FormatStrike(snap.PeakGammaStrike)} · {GexMath.FormatGex(snap.PeakGamma).TrimStart('+')}");
             for (int i = 0; i < snap.CallWalls.Count; i++)
             {
                 var (strike, value) = snap.CallWalls[i];
-                DrawLevel(g, rect, conv, tags, strike, CallColor, false, i == 0 || WallLabels ? $"CALL WALL {FormatStrike(strike)} · {GexMath.FormatGex(value)}" : null);
+                DrawLevel(g, rect, conv, tags, strike, CallWallLine, i == 0 || WallLabels ? $"CALL WALL {FormatStrike(strike)} · {GexMath.FormatGex(value)}" : null);
             }
             for (int i = 0; i < snap.PutWalls.Count; i++)
             {
                 var (strike, value) = snap.PutWalls[i];
-                DrawLevel(g, rect, conv, tags, strike, PutColor, false, i == 0 || WallLabels ? $"PUT WALL {FormatStrike(strike)} · {GexMath.FormatGex(value)}" : null);
+                DrawLevel(g, rect, conv, tags, strike, PutWallLine, i == 0 || WallLabels ? $"PUT WALL {FormatStrike(strike)} · {GexMath.FormatGex(value)}" : null);
             }
             if (!double.IsNaN(snap.MaxPain))
-                DrawLevel(g, rect, conv, tags, snap.MaxPain, MaxPainColor, true, $"MAX PAIN {FormatStrike(snap.MaxPain)}");
+                DrawLevel(g, rect, conv, tags, snap.MaxPain, MaxPainLine, $"MAX PAIN {FormatStrike(snap.MaxPain)}");
             if (!double.IsNaN(snap.GammaFlip))
-                DrawLevel(g, rect, conv, tags, snap.GammaFlip, GammaFlipColor, true, $"GAMMA FLIP {snap.GammaFlip.ToString("0.0", CultureInfo.InvariantCulture)}");
+                DrawLevel(g, rect, conv, tags, snap.GammaFlip, GammaFlipLine, $"GAMMA FLIP {snap.GammaFlip.ToString("0.0", CultureInfo.InvariantCulture)}");
         }
 
         // Tags already drawn are in `tags`; a new tag that would overlap one is moved to its left.
-        private static void DrawLevel(Graphics g, Rectangle rect, IChartWindowCoordinatesConverter conv, List<RectangleF> tags, double price, Color color, bool dashed, string tag)
+        private static void DrawLevel(Graphics g, Rectangle rect, IChartWindowCoordinatesConverter conv, List<RectangleF> tags, double price, LineOptions line, string tag)
         {
+            if (line == null || !line.Enabled)
+                return;
+            var color = line.Color;
             float y = (float)conv.GetChartY(price);
             if (y < rect.Top || y > rect.Bottom)
                 return;
 
-            using (var pen = new Pen(color, 1f) { DashStyle = dashed ? DashStyle.Dash : DashStyle.Solid })
+            using (var pen = new Pen(color, Math.Max(1, line.Width)) { DashStyle = ToDashStyle(line.LineStyle) })
                 g.DrawLine(pen, rect.Left, y, rect.Right, y);
 
             if (tag == null)
@@ -779,6 +823,14 @@ namespace GexProfile
         }
 
         // Right-aligned status line with a dot; the optional suffix (total GEX) is drawn in its own colour.
+        private static DashStyle ToDashStyle(LineStyle style) => style switch
+        {
+            LineStyle.Dash => DashStyle.Dash,
+            LineStyle.Dot => DashStyle.Dot,
+            LineStyle.DashDot => DashStyle.DashDot,
+            _ => DashStyle.Solid,
+        };
+
         private static void DrawHeader(Graphics g, Rectangle rect, string text, Color dot, string suffix = null, Color suffixColor = default)
         {
             if (string.IsNullOrEmpty(text))
