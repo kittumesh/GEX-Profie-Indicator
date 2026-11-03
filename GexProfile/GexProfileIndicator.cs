@@ -522,7 +522,9 @@ namespace GexProfile
                 step = Math.Min(step, list[i].Strike - list[i - 1].Strike);
 
             double maxPain = GexMath.MaxPain(list);
-            double gammaFlip = GexMath.GammaFlip(list, f);
+            double gammaFlip = list.Count < 2 ? double.NaN : GexMath.GammaFlip(
+                Enumerable.Range(0, n).Select(i => (current[i].IsCall, current[i].Strike, years[i], iv[i], qty[i])).ToList(),
+                multiplier, f, list[0].Strike, list[^1].Strike);
             var first = current.Min(l => l.ExpiryUtc);
             int expiryCount = current.Select(l => l.ExpiryUtc).Distinct().Count();
             var firstEt = TimeZoneInfo.ConvertTimeFromUtc(first, Eastern);
@@ -731,7 +733,7 @@ namespace GexProfile
             if (!double.IsNaN(snap.MaxPain))
                 DrawLevel(g, rect, conv, snap.MaxPain, MaxPainColor, true, $"MAX PAIN {FormatStrike(snap.MaxPain)}");
             if (!double.IsNaN(snap.GammaFlip))
-                DrawLevel(g, rect, conv, snap.GammaFlip, GammaFlipColor, true, $"GAMMA FLIP {FormatStrike(snap.GammaFlip)}");
+                DrawLevel(g, rect, conv, snap.GammaFlip, GammaFlipColor, true, $"GAMMA FLIP {snap.GammaFlip.ToString("0.0", CultureInfo.InvariantCulture)}");
         }
 
         private static void DrawLevel(Graphics g, Rectangle rect, IChartWindowCoordinatesConverter conv, double price, Color color, bool dashed, string tag)

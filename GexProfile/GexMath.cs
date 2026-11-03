@@ -71,20 +71,38 @@ namespace GexProfile
             => (isCall ? 1 : -1) * gamma * qty * multiplier * f * f * 0.01;
 
         /// <summary>
-        /// Gamma flip (matches ATAS "Zero Gamma"): of the places where net GEX turns from negative on one strike to positive
-        /// on the next strike up (strikes with zero GEX skipped), the one nearest to spot; returns that positive strike, or NaN.
+        /// Underlying price where total GEX changes sign (gamma flip). Total GEX is recomputed at hypothetical prices
+        /// between lo and hi, keeping each option's IV and time fixed; the crossing nearest to spot is returned, or NaN if none.
         /// </summary>
-        public static double GammaFlip(IReadOnlyList<StrikeRow> rows, double spot)
+        public static double GammaFlip(IReadOnlyList<(bool isCall, double strike, double years, double iv, double qty)> options,
+                                       double multiplier, double spot, double lo, double hi, int points = 400)
         {
-            double best = double.NaN;
-            StrikeRow prev = null;
-            foreach (var r in rows)
+            if (options.Count == 0 || !(hi > lo) || points < 2)
+                return double.NaN;
+
+            double Total(double s)
             {
-                if (r.NetGex == 0)
-                    continue;
-                if (prev != null && prev.NetGex < 0 && r.NetGex > 0 && (double.IsNaN(best) || Math.Abs(r.Strike - spot) < Math.Abs(best - spot)))
-                    best = r.Strike;
-                prev = r;
+                double sum = 0;
+                foreach (var o in options)
+                    if (o.qty > 0 && !double.IsNaN(o.iv))
+                        sum += Gex(o.isCall, Gamma(s, o.strike, o.years, o.iv), o.qty, multiplier, s);
+                return sum;
+            }
+
+            double best = double.NaN;
+            double step = (hi - lo) / (points - 1);
+            double prevS = lo, prev = Total(lo);
+            for (int i = 1; i < points; i++)
+            {
+                double s = lo + i * step, cur = Total(s);
+                if (prev != 0 && cur != 0 && Math.Sign(prev) != Math.Sign(cur))
+                {
+                    double flip = prevS + (s - prevS) * prev / (prev - cur);
+                    if (double.IsNaN(best) || Math.Abs(flip - spot) < Math.Abs(best - spot))
+                        best = flip;
+                }
+                prevS = s;
+                prev = cur;
             }
             return best;
         }
