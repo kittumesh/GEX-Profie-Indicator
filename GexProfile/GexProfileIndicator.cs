@@ -22,6 +22,7 @@ namespace GexProfile
         private const int HistogramNet = 0, HistogramSplit = 1;
         private const int PositionRight = 0, PositionLeft = 1;
         private const int ExpiryNearest = 0, ExpiryWeek = 1, ExpiryMonth = 2;
+        private const int LabelBackgroundLine = 0, LabelBackgroundCustom = 1;
 
         // Options that have expired (or are about to) still get a little time value so gamma stays finite.
         private const double MinDaysToExpiry = 15.0 / 1440.0;
@@ -49,7 +50,7 @@ namespace GexProfile
         public int Position = PositionRight;
 
         [InputParameter("Profile width (%)", 60, 5, 80, 1, 0)]
-        public int ProfileWidth = 30;
+        public int ProfileWidth = 20;
 
         [InputParameter("Positive GEX color", 62)]
         public Color PositiveColor = Color.FromArgb(0, 209, 160);
@@ -57,8 +58,8 @@ namespace GexProfile
         [InputParameter("Negative GEX color", 64)]
         public Color NegativeColor = Color.FromArgb(150, 80, 230);
 
-        [InputParameter("Node thickness (% of strike spacing)", 66, 10, 100, 1, 0)]
-        public int NodeThickness = 65;
+        [InputParameter("Node thickness (% of strike spacing)", 66, 5, 100, 1, 0)]
+        public int NodeThickness = 10;
 
         [InputParameter("Expiration", 70, variants: new object[] { "Auto (nearest)", ExpiryNearest, "This week", ExpiryWeek, "This month (to monthly OG)", ExpiryMonth })]
         public int Expiration = ExpiryNearest;
@@ -78,11 +79,23 @@ namespace GexProfile
         [InputParameter("Peak gamma", 130)]
         public LineOptions PeakGammaLine = Level(Color.FromArgb(60, 140, 255), LineStyle.Solid);
 
-        [InputParameter("Gamma flip", 140)]
-        public LineOptions GammaFlipLine = Level(Color.FromArgb(255, 150, 40), LineStyle.Dash);
+        [InputParameter("Zero gamma", 140)]
+        public LineOptions ZeroGammaLine = Level(Color.FromArgb(255, 150, 40), LineStyle.Dash);
 
         [InputParameter("Max pain", 150)]
         public LineOptions MaxPainLine = Level(Color.FromArgb(230, 72, 72), LineStyle.Dash);
+
+        [InputParameter("Label text color", 160)]
+        public Color LabelTextColor = Color.White;
+
+        [InputParameter("Label text size", 170, 2, 20, 1, 0)]
+        public int LabelTextSize = 8;
+
+        [InputParameter("Label background", 180, variants: new object[] { "Line color (darker)", LabelBackgroundLine, "Custom color", LabelBackgroundCustom })]
+        public int LabelBackground = LabelBackgroundLine;
+
+        [InputParameter("Label background color", 190)]
+        public Color LabelBackgroundColor = Color.FromArgb(30, 34, 44);
 
         private static LineOptions Level(Color color, LineStyle style) => new()
         {
@@ -107,7 +120,11 @@ namespace GexProfile
             ["Call wall"] = "Levels",
             ["Put wall"] = "Levels",
             ["Peak gamma"] = "Levels",
-            ["Gamma flip"] = "Levels",
+            ["Zero gamma"] = "Levels",
+            ["Label text color"] = "Labels",
+            ["Label text size"] = "Labels",
+            ["Label background"] = "Labels",
+            ["Label background color"] = "Labels",
             ["Max pain"] = "Levels",
             ["Expiration"] = "Options",
             ["Strikes per side"] = "Options",
@@ -124,7 +141,8 @@ namespace GexProfile
                     ["GEX"] = new SettingItemSeparatorGroup("GEX", 0),
                     ["Profile"] = new SettingItemSeparatorGroup("Profile", 1),
                     ["Levels"] = new SettingItemSeparatorGroup("Levels", 2),
-                    ["Options"] = new SettingItemSeparatorGroup("Options", 3),
+                    ["Labels"] = new SettingItemSeparatorGroup("Labels", 3),
+                    ["Options"] = new SettingItemSeparatorGroup("Options", 4),
                 };
                 foreach (var item in settings)
                     if (SettingGroups.TryGetValue(item.Name, out var group))
@@ -691,7 +709,7 @@ namespace GexProfile
                 var snap = snapshot;
                 if (snap == null || snap.Rows.Count == 0)
                 {
-                    DrawHeader(g, rect, status ?? "", Color.Orange);
+                    DrawHeader(g, rect, AxisX(rect), status ?? "", Color.Orange);
                     return;
                 }
 
@@ -699,9 +717,9 @@ namespace GexProfile
                 DrawHistogram(g, rect, conv, snap);
                 DrawLevels(g, rect, conv, snap);
                 if (snap.HasData)
-                    DrawHeader(g, rect, snap.Header + " · ", StatusColor, "Σ " + GexMath.FormatGex(snap.TotalGex), snap.TotalGex >= 0 ? PositiveTextColor : NegativeTextColor);
+                    DrawHeader(g, rect, AxisX(rect), snap.Header + " · ", StatusColor, "Σ " + GexMath.FormatGex(snap.TotalGex), snap.TotalGex >= 0 ? PositiveTextColor : NegativeTextColor);
                 else
-                    DrawHeader(g, rect, status ?? snap.Header, Color.Orange);
+                    DrawHeader(g, rect, AxisX(rect), status ?? snap.Header, Color.Orange);
             }
             finally
             {
@@ -709,11 +727,18 @@ namespace GexProfile
             }
         }
 
+        // The histogram's centre line (zero GEX), between the call and put bars.
+        private float AxisX(Rectangle rect)
+        {
+            float region = rect.Width * ProfileWidth / 100f;
+            return Position == PositionRight ? rect.Right - region : rect.Left + region;
+        }
+
         private void DrawHistogram(Graphics g, Rectangle rect, IChartWindowCoordinatesConverter conv, Snapshot snap)
         {
             bool split = Histogram == HistogramSplit;
             float region = rect.Width * ProfileWidth / 100f;
-            float axisX = Position == PositionRight ? rect.Right - region : rect.Left + region;
+            float axisX = AxisX(rect);
 
             double maxAbs = split
                 ? snap.Rows.Max(r => Math.Max(Math.Abs(r.CallGex), Math.Abs(r.PutGex)))
@@ -773,26 +798,27 @@ namespace GexProfile
         private void DrawLevels(Graphics g, Rectangle rect, IChartWindowCoordinatesConverter conv, Snapshot snap)
         {
             var tags = new List<RectangleF>();
+            using var font = new Font("Segoe UI", LabelTextSize);
             if (!double.IsNaN(snap.PeakGammaStrike))
-                DrawLevel(g, rect, conv, tags, snap.PeakGammaStrike, PeakGammaLine, $"PEAK GAMMA {FormatStrike(snap.PeakGammaStrike)} · {GexMath.FormatGex(snap.PeakGamma).TrimStart('+')}");
+                DrawLevel(g, font, rect, conv, tags, snap.PeakGammaStrike, PeakGammaLine, $"PEAK GAMMA {FormatStrike(snap.PeakGammaStrike)} · {GexMath.FormatGex(snap.PeakGamma).TrimStart('+')}");
             for (int i = 0; i < snap.CallWalls.Count; i++)
             {
                 var (strike, value) = snap.CallWalls[i];
-                DrawLevel(g, rect, conv, tags, strike, CallWallLine, i == 0 || WallLabels ? $"CALL WALL {FormatStrike(strike)} · {GexMath.FormatGex(value)}" : null);
+                DrawLevel(g, font, rect, conv, tags, strike, CallWallLine, i == 0 || WallLabels ? $"CALL WALL {FormatStrike(strike)} · {GexMath.FormatGex(value)}" : null);
             }
             for (int i = 0; i < snap.PutWalls.Count; i++)
             {
                 var (strike, value) = snap.PutWalls[i];
-                DrawLevel(g, rect, conv, tags, strike, PutWallLine, i == 0 || WallLabels ? $"PUT WALL {FormatStrike(strike)} · {GexMath.FormatGex(value)}" : null);
+                DrawLevel(g, font, rect, conv, tags, strike, PutWallLine, i == 0 || WallLabels ? $"PUT WALL {FormatStrike(strike)} · {GexMath.FormatGex(value)}" : null);
             }
             if (!double.IsNaN(snap.MaxPain))
-                DrawLevel(g, rect, conv, tags, snap.MaxPain, MaxPainLine, $"MAX PAIN {FormatStrike(snap.MaxPain)}");
+                DrawLevel(g, font, rect, conv, tags, snap.MaxPain, MaxPainLine, $"MAX PAIN {FormatStrike(snap.MaxPain)}");
             if (!double.IsNaN(snap.GammaFlip))
-                DrawLevel(g, rect, conv, tags, snap.GammaFlip, GammaFlipLine, $"GAMMA FLIP {snap.GammaFlip.ToString("0.0", CultureInfo.InvariantCulture)}");
+                DrawLevel(g, font, rect, conv, tags, snap.GammaFlip, ZeroGammaLine, $"ZERO GAMMA {snap.GammaFlip.ToString("0.0", CultureInfo.InvariantCulture)}");
         }
 
         // Tags already drawn are in `tags`; a new tag that would overlap one is moved to its left.
-        private static void DrawLevel(Graphics g, Rectangle rect, IChartWindowCoordinatesConverter conv, List<RectangleF> tags, double price, LineOptions line, string tag)
+        private void DrawLevel(Graphics g, Font font, Rectangle rect, IChartWindowCoordinatesConverter conv, List<RectangleF> tags, double price, LineOptions line, string tag)
         {
             if (line == null || !line.Enabled)
                 return;
@@ -802,24 +828,35 @@ namespace GexProfile
                 return;
 
             using (var pen = new Pen(color, Math.Max(1, line.Width)) { DashStyle = ToDashStyle(line.LineStyle) })
-                g.DrawLine(pen, rect.Left, y, rect.Right, y);
+            {
+                // Lines run across the price area only, stopping at the profile's centre line.
+                float axisX = AxisX(rect);
+                if (Position == PositionRight)
+                    g.DrawLine(pen, rect.Left, y, axisX, y);
+                else
+                    g.DrawLine(pen, axisX, y, rect.Right, y);
+            }
 
             if (tag == null)
                 return;
-            var size = g.MeasureString(tag, LabelFont);
-            var box = new RectangleF(rect.Right - size.Width - 12, y - size.Height / 2 - 2, size.Width + 8, size.Height + 4);
+            var size = g.MeasureString(tag, font);
+            // Tag sits just below the line, against the centre line on the price side; overlapping tags step away from it.
+            bool right = Position == PositionRight;
+            float axis = AxisX(rect);
+            float w = size.Width + 8;
+            var box = new RectangleF(right ? axis - w - 4 : axis + 4, y + Math.Max(1, line.Width) / 2f + 2, w, size.Height + 4);
             for (var hit = tags.FirstOrDefault(t => t.IntersectsWith(box)); !hit.IsEmpty; hit = tags.FirstOrDefault(t => t.IntersectsWith(box)))
-                box.X = hit.Left - box.Width - 4;
+                box.X = right ? hit.Left - box.Width - 4 : hit.Right + 4;
             tags.Add(box);
             using (var path = RoundedRect(box, 3))
-            using (var fill = new SolidBrush(Color.FromArgb(200, Darken(color))))
+            using (var fill = new SolidBrush(LabelBackground == LabelBackgroundCustom ? LabelBackgroundColor : Color.FromArgb(200, Darken(color))))
             using (var border = new Pen(color))
             {
                 g.FillPath(fill, path);
                 g.DrawPath(border, path);
             }
-            using var text = new SolidBrush(Color.White);
-            g.DrawString(tag, LabelFont, text, box.X + 4, box.Y + 2);
+            using var text = new SolidBrush(LabelTextColor);
+            g.DrawString(tag, font, text, box.X + 4, box.Y + 2);
         }
 
         // Right-aligned status line with a dot; the optional suffix (total GEX) is drawn in its own colour.
@@ -831,7 +868,7 @@ namespace GexProfile
             _ => DashStyle.Solid,
         };
 
-        private static void DrawHeader(Graphics g, Rectangle rect, string text, Color dot, string suffix = null, Color suffixColor = default)
+        private static void DrawHeader(Graphics g, Rectangle rect, float right, string text, Color dot, string suffix = null, Color suffixColor = default)
         {
             if (string.IsNullOrEmpty(text))
                 return;
@@ -839,7 +876,8 @@ namespace GexProfile
             format.FormatFlags |= StringFormatFlags.MeasureTrailingSpaces;
             var size = g.MeasureString(text, HeaderFont, PointF.Empty, format);
             var suffixSize = suffix == null ? SizeF.Empty : g.MeasureString(suffix, HeaderFont, PointF.Empty, format);
-            float x = rect.Right - size.Width - suffixSize.Width - 12, y = rect.Top + 8;
+            // Ends just left of the profile's centre line (kept on screen when the profile is on the left).
+            float x = Math.Max(rect.Left + 16, right - size.Width - suffixSize.Width - 8), y = rect.Top + 8;
             using (var dotBrush = new SolidBrush(dot))
                 g.FillEllipse(dotBrush, x - 12, y + size.Height / 2 - 3.5f, 7, 7);
             using (var brush = new SolidBrush(TextColor))
