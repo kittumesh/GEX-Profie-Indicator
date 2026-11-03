@@ -96,6 +96,7 @@ namespace GexProfile
         private static readonly Color CallColor = Color.FromArgb(0, 209, 160);
         private static readonly Color PutColor = Color.FromArgb(150, 80, 230);
         private static readonly Color MaxPainColor = Color.FromArgb(230, 72, 72);
+        private static readonly Color PeakGammaColor = Color.FromArgb(60, 140, 255);
         private static readonly Color GammaFlipColor = Color.FromArgb(255, 150, 40);
         private static readonly Color TextColor = Color.FromArgb(220, 224, 230);
         private static readonly Color AxisColor = Color.FromArgb(90, 128, 128, 140);
@@ -117,6 +118,7 @@ namespace GexProfile
             public double StrikeStep;
             public double MaxPain;
             public double GammaFlip;
+            public double PeakGammaStrike, PeakGamma;
             public List<(double strike, double value)> CallWalls, PutWalls;
             public string Header;
             public double TotalGex;
@@ -523,6 +525,8 @@ namespace GexProfile
                 step = Math.Min(step, list[i].Strike - list[i - 1].Strike);
 
             double maxPain = GexMath.MaxPain(list);
+            // Peak gamma: strike with the most gamma from calls and puts together (|call GEX| + |put GEX|).
+            var peak = list.Where(r => r.CallGex != 0 || r.PutGex != 0).OrderByDescending(r => Math.Abs(r.CallGex) + Math.Abs(r.PutGex)).FirstOrDefault();
             double gammaFlip = list.Count < 2 ? double.NaN : GexMath.GammaFlip(
                 Enumerable.Range(0, n).Select(i => (current[i].IsCall, current[i].Strike, years[i], iv[i], qty[i])).ToList(),
                 multiplier, f, list[0].Strike, list[^1].Strike);
@@ -543,6 +547,8 @@ namespace GexProfile
                 PutWalls = list.Where(r => putMeasure(r) < 0).OrderBy(putMeasure).Take(WallsPerSide).Select(r => (r.Strike, putMeasure(r))).ToList(),
                 Header = $"{date} · {dte} DTE · {n} opts",
                 TotalGex = list.Sum(r => r.NetGex),
+                PeakGammaStrike = peak?.Strike ?? double.NaN,
+                PeakGamma = peak == null ? 0 : Math.Abs(peak.CallGex) + Math.Abs(peak.PutGex),
                 HasData = qty.Any(q => q > 0),
                 FirstExpiryUtc = first,
             };
@@ -725,23 +731,27 @@ namespace GexProfile
 
         private void DrawLevels(Graphics g, Rectangle rect, IChartWindowCoordinatesConverter conv, Snapshot snap)
         {
+            var tags = new List<RectangleF>();
+            if (!double.IsNaN(snap.PeakGammaStrike))
+                DrawLevel(g, rect, conv, tags, snap.PeakGammaStrike, PeakGammaColor, false, $"PEAK GAMMA {FormatStrike(snap.PeakGammaStrike)} · {GexMath.FormatGex(snap.PeakGamma).TrimStart('+')}");
             for (int i = 0; i < snap.CallWalls.Count; i++)
             {
                 var (strike, value) = snap.CallWalls[i];
-                DrawLevel(g, rect, conv, strike, CallColor, false, i == 0 || WallLabels ? $"CALL WALL {FormatStrike(strike)} · {GexMath.FormatGex(value)}" : null);
+                DrawLevel(g, rect, conv, tags, strike, CallColor, false, i == 0 || WallLabels ? $"CALL WALL {FormatStrike(strike)} · {GexMath.FormatGex(value)}" : null);
             }
             for (int i = 0; i < snap.PutWalls.Count; i++)
             {
                 var (strike, value) = snap.PutWalls[i];
-                DrawLevel(g, rect, conv, strike, PutColor, false, i == 0 || WallLabels ? $"PUT WALL {FormatStrike(strike)} · {GexMath.FormatGex(value)}" : null);
+                DrawLevel(g, rect, conv, tags, strike, PutColor, false, i == 0 || WallLabels ? $"PUT WALL {FormatStrike(strike)} · {GexMath.FormatGex(value)}" : null);
             }
             if (!double.IsNaN(snap.MaxPain))
-                DrawLevel(g, rect, conv, snap.MaxPain, MaxPainColor, true, $"MAX PAIN {FormatStrike(snap.MaxPain)}");
+                DrawLevel(g, rect, conv, tags, snap.MaxPain, MaxPainColor, true, $"MAX PAIN {FormatStrike(snap.MaxPain)}");
             if (!double.IsNaN(snap.GammaFlip))
-                DrawLevel(g, rect, conv, snap.GammaFlip, GammaFlipColor, true, $"GAMMA FLIP {snap.GammaFlip.ToString("0.0", CultureInfo.InvariantCulture)}");
+                DrawLevel(g, rect, conv, tags, snap.GammaFlip, GammaFlipColor, true, $"GAMMA FLIP {snap.GammaFlip.ToString("0.0", CultureInfo.InvariantCulture)}");
         }
 
-        private static void DrawLevel(Graphics g, Rectangle rect, IChartWindowCoordinatesConverter conv, double price, Color color, bool dashed, string tag)
+        // Tags already drawn are in `tags`; a new tag that would overlap one is moved to its left.
+        private static void DrawLevel(Graphics g, Rectangle rect, IChartWindowCoordinatesConverter conv, List<RectangleF> tags, double price, Color color, bool dashed, string tag)
         {
             float y = (float)conv.GetChartY(price);
             if (y < rect.Top || y > rect.Bottom)
@@ -754,6 +764,9 @@ namespace GexProfile
                 return;
             var size = g.MeasureString(tag, LabelFont);
             var box = new RectangleF(rect.Right - size.Width - 12, y - size.Height / 2 - 2, size.Width + 8, size.Height + 4);
+            for (var hit = tags.FirstOrDefault(t => t.IntersectsWith(box)); !hit.IsEmpty; hit = tags.FirstOrDefault(t => t.IntersectsWith(box)))
+                box.X = hit.Left - box.Width - 4;
+            tags.Add(box);
             using (var path = RoundedRect(box, 3))
             using (var fill = new SolidBrush(Color.FromArgb(200, Darken(color))))
             using (var border = new Pen(color))
