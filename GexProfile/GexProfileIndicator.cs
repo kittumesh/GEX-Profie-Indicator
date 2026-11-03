@@ -72,17 +72,32 @@ namespace GexProfile
         [InputParameter("Call wall", 110)]
         public LineOptions CallWallLine = Level(Color.FromArgb(0, 209, 160), LineStyle.Solid);
 
+        [InputParameter("Call wall label", 115)]
+        public bool CallWallLabel = true;
+
         [InputParameter("Put wall", 120)]
         public LineOptions PutWallLine = Level(Color.FromArgb(150, 80, 230), LineStyle.Solid);
+
+        [InputParameter("Put wall label", 125)]
+        public bool PutWallLabel = true;
 
         [InputParameter("Peak gamma", 130)]
         public LineOptions PeakGammaLine = Level(Color.FromArgb(60, 140, 255), LineStyle.Solid);
 
+        [InputParameter("Peak gamma label", 135)]
+        public bool PeakGammaLabel = true;
+
         [InputParameter("Zero gamma", 140)]
         public LineOptions ZeroGammaLine = Level(Color.FromArgb(255, 150, 40), LineStyle.Dash);
 
+        [InputParameter("Zero gamma label", 145)]
+        public bool ZeroGammaLabel = true;
+
         [InputParameter("Max pain", 150)]
         public LineOptions MaxPainLine = Level(Color.FromArgb(230, 72, 72), LineStyle.Dash);
+
+        [InputParameter("Max pain label", 155)]
+        public bool MaxPainLabel = true;
 
         [InputParameter("Label text color", 160)]
         public Color LabelTextColor = Color.White;
@@ -117,14 +132,19 @@ namespace GexProfile
             ["Negative GEX color"] = "Profile",
             ["Node thickness (% of strike spacing)"] = "Profile",
             ["Call wall"] = "Levels",
+            ["Call wall label"] = "Levels",
             ["Put wall"] = "Levels",
+            ["Put wall label"] = "Levels",
             ["Peak gamma"] = "Levels",
+            ["Peak gamma label"] = "Levels",
             ["Zero gamma"] = "Levels",
+            ["Zero gamma label"] = "Levels",
             ["Label text color"] = "Labels",
             ["Label text size"] = "Labels",
             ["Label background"] = "Labels",
             ["Label background color"] = "Labels",
             ["Max pain"] = "Levels",
+            ["Max pain label"] = "Levels",
             ["Expiration"] = "Options",
             ["Strikes per side"] = "Options",
             ["Wide range (all strikes)"] = "Options",
@@ -799,40 +819,41 @@ namespace GexProfile
             var tags = new List<RectangleF>();
             using var font = new Font("Segoe UI", LabelTextSize);
             if (!double.IsNaN(snap.PeakGammaStrike))
-                DrawLevel(g, font, rect, conv, tags, snap.PeakGammaStrike, PeakGammaLine, $"PEAK GAMMA {FormatStrike(snap.PeakGammaStrike)} · {GexMath.FormatGex(snap.PeakGamma).TrimStart('+')}");
+                DrawLevel(g, font, rect, conv, tags, snap.PeakGammaStrike, PeakGammaLine, PeakGammaLabel, $"PEAK GAMMA {FormatStrike(snap.PeakGammaStrike)} · {GexMath.FormatGex(snap.PeakGamma).TrimStart('+')}");
             for (int i = 0; i < snap.CallWalls.Count; i++)
             {
                 var (strike, value) = snap.CallWalls[i];
-                DrawLevel(g, font, rect, conv, tags, strike, CallWallLine, i == 0 || WallLabels ? $"CALL WALL {FormatStrike(strike)} · {GexMath.FormatGex(value)}" : null);
+                DrawLevel(g, font, rect, conv, tags, strike, CallWallLine, CallWallLabel, i == 0 || WallLabels ? $"CALL WALL {FormatStrike(strike)} · {GexMath.FormatGex(value)}" : null);
             }
             for (int i = 0; i < snap.PutWalls.Count; i++)
             {
                 var (strike, value) = snap.PutWalls[i];
-                DrawLevel(g, font, rect, conv, tags, strike, PutWallLine, i == 0 || WallLabels ? $"PUT WALL {FormatStrike(strike)} · {GexMath.FormatGex(value)}" : null);
+                DrawLevel(g, font, rect, conv, tags, strike, PutWallLine, PutWallLabel, i == 0 || WallLabels ? $"PUT WALL {FormatStrike(strike)} · {GexMath.FormatGex(value)}" : null);
             }
             if (!double.IsNaN(snap.MaxPain))
-                DrawLevel(g, font, rect, conv, tags, snap.MaxPain, MaxPainLine, $"MAX PAIN {FormatStrike(snap.MaxPain)}");
+                DrawLevel(g, font, rect, conv, tags, snap.MaxPain, MaxPainLine, MaxPainLabel, $"MAX PAIN {FormatStrike(snap.MaxPain)}");
             if (!double.IsNaN(snap.GammaFlip))
-                DrawLevel(g, font, rect, conv, tags, snap.GammaFlip, ZeroGammaLine, $"ZERO GAMMA {snap.GammaFlip.ToString("0.0", CultureInfo.InvariantCulture)}");
+                DrawLevel(g, font, rect, conv, tags, snap.GammaFlip, ZeroGammaLine, ZeroGammaLabel, $"ZERO GAMMA {snap.GammaFlip.ToString("0.0", CultureInfo.InvariantCulture)}");
         }
 
         // Tags already drawn are in `tags`; a new tag that would overlap one is moved to its left.
-        private void DrawLevel(Graphics g, Font font, Rectangle rect, IChartWindowCoordinatesConverter conv, List<RectangleF> tags, double price, LineOptions line, string tag)
+        private void DrawLevel(Graphics g, Font font, Rectangle rect, IChartWindowCoordinatesConverter conv, List<RectangleF> tags, double price, LineOptions line, bool showLabel, string tag)
         {
-            if (line == null || !line.Enabled)
+            if (line == null)
                 return;
             var color = line.Color;
             float y = (float)conv.GetChartY(price);
             if (y < rect.Top || y > rect.Bottom)
                 return;
 
-            using (var pen = new Pen(color, Math.Max(1, line.Width)) { DashStyle = ToDashStyle(line.LineStyle) })
+            // Lines run across the price area only, stopping at the profile's centre line.
+            if (line.Enabled)
             {
-                // Lines run across the price area only, stopping at the profile's centre line.
+                using var pen = new Pen(color, Math.Max(1, line.Width)) { DashStyle = ToDashStyle(line.LineStyle) };
                 g.DrawLine(pen, rect.Left, y, AxisX(rect), y);
             }
 
-            if (tag == null)
+            if (tag == null || !showLabel)
                 return;
             var size = g.MeasureString(tag, font);
             // Tag sits just below the line, ending at the centre line; overlapping tags step further left.
