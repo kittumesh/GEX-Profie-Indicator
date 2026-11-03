@@ -20,7 +20,6 @@ namespace GexProfile
     {
         private const int SourceOpenInterest = 0, SourceDayVolume = 1;
         private const int HistogramNet = 0, HistogramSplit = 1;
-        private const int PositionRight = 0, PositionLeft = 1;
         private const int ExpiryNearest = 0, ExpiryWeek = 1, ExpiryMonth = 2;
         private const int LabelBackgroundLine = 0, LabelBackgroundCustom = 1;
 
@@ -46,8 +45,8 @@ namespace GexProfile
         [InputParameter("Wall labels", 40)]
         public bool WallLabels = false;
 
-        [InputParameter("Position", 50, variants: new object[] { "Right", PositionRight, "Left", PositionLeft })]
-        public int Position = PositionRight;
+        [InputParameter("Right padding (% of chart width)", 50, 0, 80, 1, 0)]
+        public int RightPadding = 0;
 
         [InputParameter("Profile width (%)", 60, 5, 80, 1, 0)]
         public int ProfileWidth = 20;
@@ -112,7 +111,7 @@ namespace GexProfile
             ["Histogram"] = "GEX",
             ["Walls per side"] = "GEX",
             ["Wall labels"] = "GEX",
-            ["Position"] = "Profile",
+            ["Right padding (% of chart width)"] = "Profile",
             ["Profile width (%)"] = "Profile",
             ["Positive GEX color"] = "Profile",
             ["Negative GEX color"] = "Profile",
@@ -731,7 +730,7 @@ namespace GexProfile
         private float AxisX(Rectangle rect)
         {
             float region = rect.Width * ProfileWidth / 100f;
-            return Position == PositionRight ? rect.Right - region : rect.Left + region;
+            return rect.Right - rect.Width * RightPadding / 100f - region;
         }
 
         private void DrawHistogram(Graphics g, Rectangle rect, IChartWindowCoordinatesConverter conv, Snapshot snap)
@@ -830,23 +829,17 @@ namespace GexProfile
             using (var pen = new Pen(color, Math.Max(1, line.Width)) { DashStyle = ToDashStyle(line.LineStyle) })
             {
                 // Lines run across the price area only, stopping at the profile's centre line.
-                float axisX = AxisX(rect);
-                if (Position == PositionRight)
-                    g.DrawLine(pen, rect.Left, y, axisX, y);
-                else
-                    g.DrawLine(pen, axisX, y, rect.Right, y);
+                g.DrawLine(pen, rect.Left, y, AxisX(rect), y);
             }
 
             if (tag == null)
                 return;
             var size = g.MeasureString(tag, font);
-            // Tag sits just below the line, against the centre line on the price side; overlapping tags step away from it.
-            bool right = Position == PositionRight;
-            float axis = AxisX(rect);
+            // Tag sits just below the line, ending at the centre line; overlapping tags step further left.
             float w = size.Width + 8;
-            var box = new RectangleF(right ? axis - w - 4 : axis + 4, y + Math.Max(1, line.Width) / 2f + 2, w, size.Height + 4);
+            var box = new RectangleF(AxisX(rect) - w - 4, y + Math.Max(1, line.Width) / 2f + 2, w, size.Height + 4);
             for (var hit = tags.FirstOrDefault(t => t.IntersectsWith(box)); !hit.IsEmpty; hit = tags.FirstOrDefault(t => t.IntersectsWith(box)))
-                box.X = right ? hit.Left - box.Width - 4 : hit.Right + 4;
+                box.X = hit.Left - box.Width - 4;
             tags.Add(box);
             using (var path = RoundedRect(box, 3))
             using (var fill = new SolidBrush(LabelBackground == LabelBackgroundCustom ? LabelBackgroundColor : Color.FromArgb(200, Darken(color))))
@@ -876,7 +869,7 @@ namespace GexProfile
             format.FormatFlags |= StringFormatFlags.MeasureTrailingSpaces;
             var size = g.MeasureString(text, HeaderFont, PointF.Empty, format);
             var suffixSize = suffix == null ? SizeF.Empty : g.MeasureString(suffix, HeaderFont, PointF.Empty, format);
-            // Ends just left of the profile's centre line (kept on screen when the profile is on the left).
+            // Ends just left of the profile's centre line.
             float x = Math.Max(rect.Left + 16, right - size.Width - suffixSize.Width - 8), y = rect.Top + 8;
             using (var dotBrush = new SolidBrush(dot))
                 g.FillEllipse(dotBrush, x - 12, y + size.Height / 2 - 3.5f, 7, 7);
