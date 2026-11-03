@@ -96,6 +96,7 @@ namespace GexProfile
         private static readonly Color CallColor = Color.FromArgb(0, 209, 160);
         private static readonly Color PutColor = Color.FromArgb(150, 80, 230);
         private static readonly Color MaxPainColor = Color.FromArgb(230, 72, 72);
+        private static readonly Color GammaFlipColor = Color.FromArgb(255, 150, 40);
         private static readonly Color TextColor = Color.FromArgb(220, 224, 230);
         private static readonly Color AxisColor = Color.FromArgb(90, 128, 128, 140);
         private static readonly Font LabelFont = new("Segoe UI", 8f);
@@ -115,6 +116,7 @@ namespace GexProfile
             public List<StrikeRow> Rows;
             public double StrikeStep;
             public double MaxPain;
+            public double GammaFlip;
             public List<(double strike, double value)> CallWalls, PutWalls;
             public string Header;
             public bool HasData;
@@ -520,6 +522,9 @@ namespace GexProfile
                 step = Math.Min(step, list[i].Strike - list[i - 1].Strike);
 
             double maxPain = GexMath.MaxPain(list);
+            double gammaFlip = list.Count < 2 ? double.NaN : GexMath.GammaFlip(
+                Enumerable.Range(0, n).Select(i => (current[i].IsCall, current[i].Strike, years[i], iv[i], qty[i])).ToList(),
+                multiplier, f, list[0].Strike, list[^1].Strike);
             var first = current.Min(l => l.ExpiryUtc);
             int expiryCount = current.Select(l => l.ExpiryUtc).Distinct().Count();
             var firstEt = TimeZoneInfo.ConvertTimeFromUtc(first, Eastern);
@@ -532,6 +537,7 @@ namespace GexProfile
                 Rows = list,
                 StrikeStep = step == double.MaxValue ? 0 : step,
                 MaxPain = maxPain,
+                GammaFlip = gammaFlip,
                 CallWalls = list.Where(r => callMeasure(r) > 0).OrderByDescending(callMeasure).Take(WallsPerSide).Select(r => (r.Strike, callMeasure(r))).ToList(),
                 PutWalls = list.Where(r => putMeasure(r) < 0).OrderBy(putMeasure).Take(WallsPerSide).Select(r => (r.Strike, putMeasure(r))).ToList(),
                 Header = $"{date} · {dte} DTE · {n} opts · MP {FormatStrike(maxPain)}",
@@ -726,6 +732,8 @@ namespace GexProfile
             }
             if (!double.IsNaN(snap.MaxPain))
                 DrawLevel(g, rect, conv, snap.MaxPain, MaxPainColor, true, $"MAX PAIN {FormatStrike(snap.MaxPain)}");
+            if (!double.IsNaN(snap.GammaFlip))
+                DrawLevel(g, rect, conv, snap.GammaFlip, GammaFlipColor, true, $"GAMMA FLIP {snap.GammaFlip.ToString("0.0", CultureInfo.InvariantCulture)}");
         }
 
         private static void DrawLevel(Graphics g, Rectangle rect, IChartWindowCoordinatesConverter conv, double price, Color color, bool dashed, string tag)
