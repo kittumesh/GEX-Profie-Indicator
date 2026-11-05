@@ -194,8 +194,6 @@ namespace GexProfile
             public bool IsCall;
             public double Strike;
             public DateTime ExpiryUtc;
-            // Within Strikes per side of the price at load; only these feed the histogram, walls and peak gamma.
-            public bool InRange;
         }
 
         private sealed class Snapshot
@@ -414,20 +412,13 @@ namespace GexProfile
                 var newLegs = new List<Leg>();
                 foreach (var (serie, options) in chains)
                 {
-                    var strikes = options.Select(o => o.StrikePrice).Distinct().OrderBy(k => k).ToList();
-                    var keep = new HashSet<double>(strikes);
-                    if (!WideRange)
-                    {
-                        int atm = strikes.IndexOf(strikes.OrderBy(k => Math.Abs(k - f)).First());
-                        keep = new HashSet<double>(strikes.Skip(Math.Max(0, atm - StrikesPerSide)).Take(2 * StrikesPerSide + 1));
-                    }
-                    // Every strike is loaded: max pain and zero gamma use the whole chain.
+                    // Every strike is loaded: max pain and zero gamma use the whole chain; the shown window is picked in Compute.
                     foreach (var o in options)
                     {
                         var exp = o.ExpirationDate != default ? o.ExpirationDate : serie.ExpirationDate;
-                        newLegs.Add(new Leg { Symbol = o, IsCall = o.OptionType == OptionType.Call, Strike = o.StrikePrice, ExpiryUtc = ExpiryUtc(exp), InRange = keep.Contains(o.StrikePrice) });
+                        newLegs.Add(new Leg { Symbol = o, IsCall = o.OptionType == OptionType.Call, Strike = o.StrikePrice, ExpiryUtc = ExpiryUtc(exp) });
                     }
-                    Log($"{serie.Name}: {strikes.Count} strikes, {keep.Count} shown around {f}, expiry {ExpiryUtc(serie.ExpirationDate):yyyy-MM-dd HH:mm} UTC");
+                    Log($"{serie.Name}: {options.Select(o => o.StrikePrice).Distinct().Count()} strikes, expiry {ExpiryUtc(serie.ExpirationDate):yyyy-MM-dd HH:mm} UTC");
                 }
 
                 lock (legs)
@@ -595,14 +586,11 @@ namespace GexProfile
             }
 
             var rows = new SortedDictionary<double, StrikeRow>();
-            var shown = new HashSet<double>();
             for (int i = 0; i < n; i++)
             {
                 var leg = current[i];
                 if (!rows.TryGetValue(leg.Strike, out var row))
                     rows[leg.Strike] = row = new StrikeRow { Strike = leg.Strike };
-                if (leg.InRange)
-                    shown.Add(leg.Strike);
 
                 double gex = double.IsNaN(iv[i]) ? 0 : GexMath.Gex(leg.IsCall, GexMath.Gamma(f, leg.Strike, years[i], iv[i]), qty[i], multiplier, f);
                 if (leg.IsCall)
@@ -620,9 +608,16 @@ namespace GexProfile
             }
 
             var all = rows.Values.ToList();
-            var list = all.Where(r => shown.Contains(r.Strike)).ToList();
-            if (list.Count == 0)
-                return null;
+            // Histogram, walls and peak gamma: Strikes per side around the current price, counted on all expiries' strikes together.
+            var list = all;
+            if (!WideRange)
+            {
+                int atm = 0;
+                for (int i = 1; i < all.Count; i++)
+                    if (Math.Abs(all[i].Strike - f) < Math.Abs(all[atm].Strike - f))
+                        atm = i;
+                list = all.Skip(Math.Max(0, atm - StrikesPerSide)).Take(2 * StrikesPerSide + 1).ToList();
+            }
             bool split = Histogram == HistogramSplit;
             Func<StrikeRow, double> callMeasure = split ? r => r.CallGex : r => r.NetGex;
             Func<StrikeRow, double> putMeasure = split ? r => r.PutGex : r => r.NetGex;
@@ -916,12 +911,7 @@ namespace GexProfile
                 return;
             double scale = (region - 4) / maxAbs;
 
-            float thickness = 8;
-            if (snap.StrikeStep > 0)
-            {
-                double y0 = conv.GetChartY(snap.Rows[0].Strike), y1 = conv.GetChartY(snap.Rows[0].Strike + snap.StrikeStep);
-                thickness = (float)Math.Clamp(Math.Abs(y1 - y0) * NodeThickness / 100.0, 1, 60);
-            }
+            float thickness = NodeHeight(conv, snap);
 
             using (var axisPen = new Pen(AxisColor))
                 g.DrawLine(axisPen, axisX, rect.Top, axisX, rect.Bottom);
@@ -964,24 +954,35 @@ namespace GexProfile
             }
         }
 
+        // Height of a histogram node in pixels.
+        private float NodeHeight(IChartWindowCoordinatesConverter conv, Snapshot snap)
+        {
+            if (!(snap.StrikeStep > 0))
+                return 8;
+            double y0 = conv.GetChartY(snap.Rows[0].Strike), y1 = conv.GetChartY(snap.Rows[0].Strike + snap.StrikeStep);
+            return (float)Math.Clamp(Math.Abs(y1 - y0) * NodeThickness / 100.0, 1, 60);
+        }
+
         private void DrawLevels(Graphics g, Rectangle rect, IChartWindowCoordinatesConverter conv, Snapshot snap)
         {
             var tags = new List<RectangleF>();
+            // Levels usually sit on a strike, so keep their tags clear of that strike's node.
+            float nodeHalf = NodeHeight(conv, snap) / 2;
             using var font = new Font("Segoe UI", LabelTextSize);
             if (!double.IsNaN(snap.PeakGammaStrike))
-                DrawLevel(g, font, rect, conv, tags, snap.PeakGammaStrike, PeakGammaLine, PeakGammaLabel, "PEAK GAMMA");
+                DrawLevel(g, font, rect, conv, tags, nodeHalf, snap.PeakGammaStrike, PeakGammaLine, PeakGammaLabel, "PEAK GAMMA");
             for (int i = 0; i < snap.CallWalls.Count; i++)
-                DrawLevel(g, font, rect, conv, tags, snap.CallWalls[i].strike, CallWallLine, CallWallLabel, i == 0 || WallLabels ? "CALL WALL" : null);
+                DrawLevel(g, font, rect, conv, tags, nodeHalf, snap.CallWalls[i].strike, CallWallLine, CallWallLabel, i == 0 || WallLabels ? "CALL WALL" : null);
             for (int i = 0; i < snap.PutWalls.Count; i++)
-                DrawLevel(g, font, rect, conv, tags, snap.PutWalls[i].strike, PutWallLine, PutWallLabel, i == 0 || WallLabels ? "PUT WALL" : null);
+                DrawLevel(g, font, rect, conv, tags, nodeHalf, snap.PutWalls[i].strike, PutWallLine, PutWallLabel, i == 0 || WallLabels ? "PUT WALL" : null);
             if (!double.IsNaN(snap.MaxPain))
-                DrawLevel(g, font, rect, conv, tags, snap.MaxPain, MaxPainLine, MaxPainLabel, "MAX PAIN");
+                DrawLevel(g, font, rect, conv, tags, nodeHalf, snap.MaxPain, MaxPainLine, MaxPainLabel, "MAX PAIN");
             if (!double.IsNaN(snap.GammaFlip))
-                DrawLevel(g, font, rect, conv, tags, snap.GammaFlip, ZeroGammaLine, ZeroGammaLabel, "ZERO GAMMA");
+                DrawLevel(g, font, rect, conv, tags, nodeHalf, snap.GammaFlip, ZeroGammaLine, ZeroGammaLabel, "ZERO GAMMA");
         }
 
         // Tags already drawn are in `tags`; a new tag that would overlap one is moved to its left.
-        private void DrawLevel(Graphics g, Font font, Rectangle rect, IChartWindowCoordinatesConverter conv, List<RectangleF> tags, double price, LineOptions line, bool showLabel, string tag)
+        private void DrawLevel(Graphics g, Font font, Rectangle rect, IChartWindowCoordinatesConverter conv, List<RectangleF> tags, float nodeHalf, double price, LineOptions line, bool showLabel, string tag)
         {
             if (line == null)
                 return;
@@ -1000,9 +1001,9 @@ namespace GexProfile
             if (tag == null || !showLabel)
                 return;
             var size = g.MeasureString(tag, font);
-            // Tag sits just below the line, ending at the centre line; overlapping tags step further left.
+            // Tag sits below the line and its node with a 4px gap, ending at the centre line; overlapping tags step further left.
             float w = size.Width + 8;
-            var box = new RectangleF(AxisX(rect) - w - 4, y + Math.Max(1, line.Width) / 2f + 2, w, size.Height + 4);
+            var box = new RectangleF(AxisX(rect) - w - 4, y + Math.Max(Math.Max(1, line.Width) / 2f, nodeHalf) + 4, w, size.Height + 4);
             for (var hit = tags.FirstOrDefault(t => t.IntersectsWith(box)); !hit.IsEmpty; hit = tags.FirstOrDefault(t => t.IntersectsWith(box)))
                 box.X = hit.Left - box.Width - 4;
             tags.Add(box);
