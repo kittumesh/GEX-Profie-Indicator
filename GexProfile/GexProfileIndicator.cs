@@ -43,7 +43,7 @@ namespace GexProfile
         [InputParameter("Walls per side", 30, 1, 10, 1, 0)]
         public int WallsPerSide = 1;
 
-        [InputParameter("Wall labels", 40)]
+        [InputParameter("Secondary wall labels", 40)]
         public bool WallLabels = false;
 
         [InputParameter("Mode buttons", 45)]
@@ -129,7 +129,7 @@ namespace GexProfile
             ["Source"] = "GEX",
             ["Histogram"] = "GEX",
             ["Walls per side"] = "GEX",
-            ["Wall labels"] = "GEX",
+            ["Secondary wall labels"] = "GEX",
             ["Mode buttons"] = "GEX",
             ["Right padding (% of chart width)"] = "Profile",
             ["Profile width (%)"] = "Profile",
@@ -972,9 +972,9 @@ namespace GexProfile
             if (!double.IsNaN(snap.PeakGammaStrike))
                 DrawLevel(g, font, rect, conv, tags, nodeHalf, snap.PeakGammaStrike, PeakGammaLine, PeakGammaLabel, "PEAK GAMMA");
             for (int i = 0; i < snap.CallWalls.Count; i++)
-                DrawLevel(g, font, rect, conv, tags, nodeHalf, snap.CallWalls[i].strike, CallWallLine, CallWallLabel, i == 0 || WallLabels ? "CALL WALL" : null);
+                DrawLevel(g, font, rect, conv, tags, nodeHalf, snap.CallWalls[i].strike, CallWallLine, CallWallLabel, i == 0 ? "CALL WALL" : WallLabels ? $"CALL WALL {i + 1}" : null);
             for (int i = 0; i < snap.PutWalls.Count; i++)
-                DrawLevel(g, font, rect, conv, tags, nodeHalf, snap.PutWalls[i].strike, PutWallLine, PutWallLabel, i == 0 || WallLabels ? "PUT WALL" : null);
+                DrawLevel(g, font, rect, conv, tags, nodeHalf, snap.PutWalls[i].strike, PutWallLine, PutWallLabel, i == 0 ? "PUT WALL" : WallLabels ? $"PUT WALL {i + 1}" : null);
             if (!double.IsNaN(snap.MaxPain))
                 DrawLevel(g, font, rect, conv, tags, nodeHalf, snap.MaxPain, MaxPainLine, MaxPainLabel, "MAX PAIN");
             if (!double.IsNaN(snap.GammaFlip))
