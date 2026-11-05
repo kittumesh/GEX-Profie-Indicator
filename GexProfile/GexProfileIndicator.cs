@@ -8,6 +8,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using TradingPlatform.BusinessLayer;
 using TradingPlatform.BusinessLayer.Chart;
+using TradingPlatform.BusinessLayer.Native;
 using TradingPlatform.BusinessLayer.Utils;
 
 namespace GexProfile
@@ -44,6 +45,9 @@ namespace GexProfile
 
         [InputParameter("Wall labels", 40)]
         public bool WallLabels = false;
+
+        [InputParameter("Mode buttons", 45)]
+        public bool ModeButtons = true;
 
         [InputParameter("Right padding (% of chart width)", 50, 0, 80, 1, 0)]
         public int RightPadding = 0;
@@ -126,6 +130,7 @@ namespace GexProfile
             ["Histogram"] = "GEX",
             ["Walls per side"] = "GEX",
             ["Wall labels"] = "GEX",
+            ["Mode buttons"] = "GEX",
             ["Right padding (% of chart width)"] = "Profile",
             ["Profile width (%)"] = "Profile",
             ["Positive GEX color"] = "Profile",
@@ -180,6 +185,7 @@ namespace GexProfile
         private static readonly Color AxisColor = Color.FromArgb(90, 128, 128, 140);
         private static readonly Font LabelFont = new("Segoe UI", 8f);
         private static readonly Font HeaderFont = new("Segoe UI", 9f);
+        private static readonly Font ButtonFont = new("Segoe UI", 7.5f);
         private static readonly TimeZoneInfo Eastern = FindEastern();
 
         private sealed class Leg
@@ -217,6 +223,16 @@ namespace GexProfile
         private int emptySkips;
         private volatile bool hasLaterExpiry;
 
+        private enum ModeButton { Net, Split, OpenInterest, Volume, Auto, Week, Month }
+        private static readonly (ModeButton button, string text)[][] ButtonRows =
+        {
+            new[] { (ModeButton.Net, "Net"), (ModeButton.Split, "Split"), (ModeButton.OpenInterest, "OI"), (ModeButton.Volume, "VOL") },
+            new[] { (ModeButton.Auto, "Auto"), (ModeButton.Week, "Week"), (ModeButton.Month, "Month") },
+        };
+        // Where each button was last painted, for hit-testing clicks.
+        private volatile (ModeButton button, RectangleF box)[] buttonBoxes = Array.Empty<(ModeButton, RectangleF)>();
+        private IChart hookedChart;
+
         public GexProfileIndicator()
         {
             Name = "GEX Profile";
@@ -235,6 +251,7 @@ namespace GexProfile
                 emptySkips = 0;
                 StartLoad();
             }
+            HookChart();
         }
 
         protected override void OnClear()
@@ -244,6 +261,7 @@ namespace GexProfile
                 active = false;
                 Teardown();
             }
+            UnhookChart();
         }
 
         private void StartLoad()
@@ -708,6 +726,123 @@ namespace GexProfile
 
         #endregion
 
+        #region Mode buttons
+
+        private void HookChart()
+        {
+            var chart = CurrentChart;
+            if (chart == null || chart == hookedChart)
+                return;
+            UnhookChart();
+            chart.MouseClick += OnChartMouseClick;
+            hookedChart = chart;
+        }
+
+        private void UnhookChart()
+        {
+            if (hookedChart != null)
+                hookedChart.MouseClick -= OnChartMouseClick;
+            hookedChart = null;
+        }
+
+        private void OnChartMouseClick(object sender, ChartMouseNativeEventArgs e)
+        {
+            if (!ModeButtons || e.Button != NativeMouseButtons.Left)
+                return;
+            var point = new PointF(e.Location.X, e.Location.Y);
+            foreach (var (button, box) in buttonBoxes)
+            {
+                if (!box.Contains(point))
+                    continue;
+                e.Handled = true;
+                Apply(button);
+                return;
+            }
+        }
+
+        private bool IsSelected(ModeButton button) => button switch
+        {
+            ModeButton.Net => Histogram == HistogramNet,
+            ModeButton.Split => Histogram == HistogramSplit,
+            ModeButton.OpenInterest => Source == SourceOpenInterest,
+            ModeButton.Volume => Source == SourceDayVolume,
+            ModeButton.Auto => Expiration == ExpiryNearest,
+            ModeButton.Week => Expiration == ExpiryWeek,
+            ModeButton.Month => Expiration == ExpiryMonth,
+            _ => false,
+        };
+
+        // Same effect as changing the setting: histogram and source only need a recalculation, expiration reloads the chain.
+        private void Apply(ModeButton button)
+        {
+            if (IsSelected(button))
+                return;
+            switch (button)
+            {
+                case ModeButton.Net: Histogram = HistogramNet; break;
+                case ModeButton.Split: Histogram = HistogramSplit; break;
+                case ModeButton.OpenInterest: Source = SourceOpenInterest; break;
+                case ModeButton.Volume: Source = SourceDayVolume; break;
+                case ModeButton.Auto: Expiration = ExpiryNearest; break;
+                case ModeButton.Week: Expiration = ExpiryWeek; break;
+                case ModeButton.Month: Expiration = ExpiryMonth; break;
+            }
+            if (button is ModeButton.Auto or ModeButton.Week or ModeButton.Month)
+            {
+                emptySkips = 0;
+                Reload();
+            }
+            else
+            {
+                Task.Run(Tick);
+                CurrentChart?.RedrawBuffer();
+            }
+        }
+
+        // Two rows of small toggle buttons under the header, right-aligned with it.
+        private void DrawButtons(Graphics g, Rectangle rect)
+        {
+            if (!ModeButtons)
+            {
+                buttonBoxes = Array.Empty<(ModeButton, RectangleF)>();
+                return;
+            }
+            const float pad = 6, gap = 3, height = 16;
+            float width = ButtonRows.SelectMany(r => r).Max(b => g.MeasureString(b.text, ButtonFont).Width) + 2 * pad;
+            float right = AxisX(rect) - 8, y = rect.Top + 30;
+            var boxes = new List<(ModeButton, RectangleF)>();
+
+            using var activeFill = new SolidBrush(Color.FromArgb(200, Darken(StatusColor)));
+            using var idleFill = new SolidBrush(Color.FromArgb(200, 30, 34, 44));
+            using var activeBorder = new Pen(StatusColor);
+            using var idleBorder = new Pen(Color.FromArgb(90, 96, 110));
+            using var activeText = new SolidBrush(Color.White);
+            using var idleText = new SolidBrush(Color.FromArgb(150, 156, 168));
+            using var format = new StringFormat { Alignment = StringAlignment.Center, LineAlignment = StringAlignment.Center };
+
+            foreach (var row in ButtonRows)
+            {
+                float x = Math.Max(rect.Left + 4, right - row.Length * width - (row.Length - 1) * gap);
+                foreach (var (button, text) in row)
+                {
+                    var box = new RectangleF(x, y, width, height);
+                    bool on = IsSelected(button);
+                    using (var path = RoundedRect(box, 3))
+                    {
+                        g.FillPath(on ? activeFill : idleFill, path);
+                        g.DrawPath(on ? activeBorder : idleBorder, path);
+                    }
+                    g.DrawString(text, ButtonFont, on ? activeText : idleText, box, format);
+                    boxes.Add((button, box));
+                    x += width + gap;
+                }
+                y += height + gap;
+            }
+            buttonBoxes = boxes.ToArray();
+        }
+
+        #endregion
+
         #region Painting
 
         public override void OnPaintChart(PaintChartEventArgs args)
@@ -716,6 +851,7 @@ namespace GexProfile
             var chart = CurrentChart;
             if (chart == null)
                 return;
+            HookChart();
 
             var g = args.Graphics;
             var rect = args.Rectangle;
@@ -729,6 +865,7 @@ namespace GexProfile
                 if (snap == null || snap.Rows.Count == 0)
                 {
                     DrawHeader(g, rect, AxisX(rect), status ?? "", Color.Orange);
+                    DrawButtons(g, rect);
                     return;
                 }
 
@@ -739,6 +876,7 @@ namespace GexProfile
                     DrawHeader(g, rect, AxisX(rect), snap.Header + " · ", StatusColor, "Σ " + GexMath.FormatGex(snap.TotalGex), snap.TotalGex >= 0 ? PositiveTextColor : NegativeTextColor);
                 else
                     DrawHeader(g, rect, AxisX(rect), status ?? snap.Header, Color.Orange);
+                DrawButtons(g, rect);
             }
             finally
             {
