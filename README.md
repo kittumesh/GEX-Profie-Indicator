@@ -446,7 +446,6 @@ dotnet build GexProfile -p:QuantowerRoot="D:\Quantower" -p:QuantowerVersion=v1.1
 | `GexProfile/GexProfileIndicator.cs` | The indicator: settings, chain loading, calculation loop, drawing, mode buttons. |
 | `GexProfile/GexMath.cs` | Math: Black-76 price, implied vol, gamma, GEX, zero gamma search, max pain, number formatting, IV filling. |
 | `GexProfile/GexProfile.csproj` | Project file (target framework, Quantower reference, output folder). |
-| `Reference screenshots/` | The original reference images used as the visual spec. |
 
 ---
 
