@@ -194,6 +194,8 @@ namespace GexProfile
             public bool IsCall;
             public double Strike;
             public DateTime ExpiryUtc;
+            // Within Strikes per side of the price at load; only these feed the histogram, walls and peak gamma.
+            public bool InRange;
         }
 
         private sealed class Snapshot
@@ -202,6 +204,7 @@ namespace GexProfile
             public double StrikeStep;
             public double MaxPain;
             public double GammaFlip;
+            public double SearchLo, SearchHi;
             public double PeakGammaStrike;
             public List<(double strike, double value)> CallWalls, PutWalls;
             public string Header;
@@ -418,12 +421,13 @@ namespace GexProfile
                         int atm = strikes.IndexOf(strikes.OrderBy(k => Math.Abs(k - f)).First());
                         keep = new HashSet<double>(strikes.Skip(Math.Max(0, atm - StrikesPerSide)).Take(2 * StrikesPerSide + 1));
                     }
-                    foreach (var o in options.Where(o => keep.Contains(o.StrikePrice)))
+                    // Every strike is loaded: max pain and zero gamma use the whole chain.
+                    foreach (var o in options)
                     {
                         var exp = o.ExpirationDate != default ? o.ExpirationDate : serie.ExpirationDate;
-                        newLegs.Add(new Leg { Symbol = o, IsCall = o.OptionType == OptionType.Call, Strike = o.StrikePrice, ExpiryUtc = ExpiryUtc(exp) });
+                        newLegs.Add(new Leg { Symbol = o, IsCall = o.OptionType == OptionType.Call, Strike = o.StrikePrice, ExpiryUtc = ExpiryUtc(exp), InRange = keep.Contains(o.StrikePrice) });
                     }
-                    Log($"{serie.Name}: {keep.Count} of {strikes.Count} strikes around {f}, expiry {ExpiryUtc(serie.ExpirationDate):yyyy-MM-dd HH:mm} UTC");
+                    Log($"{serie.Name}: {strikes.Count} strikes, {keep.Count} shown around {f}, expiry {ExpiryUtc(serie.ExpirationDate):yyyy-MM-dd HH:mm} UTC");
                 }
 
                 lock (legs)
@@ -511,7 +515,7 @@ namespace GexProfile
                 {
                     sampleLogged = true;
                     LogSample();
-                    Log($"zero gamma {(double.IsNaN(snap.GammaFlip) ? "none (total GEX keeps one sign)" : snap.GammaFlip.ToString("0.0", CultureInfo.InvariantCulture))} searching {snap.Rows[0].Strike}–{snap.Rows[^1].Strike}, total GEX {GexMath.FormatGex(snap.TotalGex)}");
+                    Log($"zero gamma {(double.IsNaN(snap.GammaFlip) ? "none (total GEX keeps one sign)" : snap.GammaFlip.ToString("0.0", CultureInfo.InvariantCulture))} searching {snap.SearchLo}–{snap.SearchHi}, max pain {snap.MaxPain}, total GEX {GexMath.FormatGex(snap.TotalGex)}");
                 }
                 if (NeedsNextExpiry(snap))
                 {
@@ -591,11 +595,14 @@ namespace GexProfile
             }
 
             var rows = new SortedDictionary<double, StrikeRow>();
+            var shown = new HashSet<double>();
             for (int i = 0; i < n; i++)
             {
                 var leg = current[i];
                 if (!rows.TryGetValue(leg.Strike, out var row))
                     rows[leg.Strike] = row = new StrikeRow { Strike = leg.Strike };
+                if (leg.InRange)
+                    shown.Add(leg.Strike);
 
                 double gex = double.IsNaN(iv[i]) ? 0 : GexMath.Gex(leg.IsCall, GexMath.Gamma(f, leg.Strike, years[i], iv[i]), qty[i], multiplier, f);
                 if (leg.IsCall)
@@ -612,7 +619,10 @@ namespace GexProfile
                 }
             }
 
-            var list = rows.Values.ToList();
+            var all = rows.Values.ToList();
+            var list = all.Where(r => shown.Contains(r.Strike)).ToList();
+            if (list.Count == 0)
+                return null;
             bool split = Histogram == HistogramSplit;
             Func<StrikeRow, double> callMeasure = split ? r => r.CallGex : r => r.NetGex;
             Func<StrikeRow, double> putMeasure = split ? r => r.PutGex : r => r.NetGex;
@@ -621,12 +631,12 @@ namespace GexProfile
             for (int i = 1; i < list.Count; i++)
                 step = Math.Min(step, list[i].Strike - list[i - 1].Strike);
 
-            double maxPain = GexMath.MaxPain(list);
+            double maxPain = GexMath.MaxPain(all);
             // Peak gamma: strike with the most gamma from calls and puts together (|call GEX| + |put GEX|).
             var peak = list.Where(r => r.CallGex != 0 || r.PutGex != 0).OrderByDescending(r => Math.Abs(r.CallGex) + Math.Abs(r.PutGex)).FirstOrDefault();
-            double gammaFlip = list.Count < 2 ? double.NaN : GexMath.GammaFlip(
+            double gammaFlip = all.Count < 2 ? double.NaN : GexMath.GammaFlip(
                 Enumerable.Range(0, n).Select(i => (current[i].IsCall, current[i].Strike, years[i], iv[i], qty[i])).ToList(),
-                multiplier, f, list[0].Strike, list[^1].Strike);
+                multiplier, f, all[0].Strike, all[^1].Strike);
             var first = current.Min(l => l.ExpiryUtc);
             int expiryCount = current.Select(l => l.ExpiryUtc).Distinct().Count();
             var firstEt = TimeZoneInfo.ConvertTimeFromUtc(first, Eastern);
@@ -640,6 +650,8 @@ namespace GexProfile
                 StrikeStep = step == double.MaxValue ? 0 : step,
                 MaxPain = maxPain,
                 GammaFlip = gammaFlip,
+                SearchLo = all[0].Strike,
+                SearchHi = all[^1].Strike,
                 CallWalls = list.Where(r => callMeasure(r) > 0).OrderByDescending(callMeasure).Take(WallsPerSide).Select(r => (r.Strike, callMeasure(r))).ToList(),
                 PutWalls = list.Where(r => putMeasure(r) < 0).OrderBy(putMeasure).Take(WallsPerSide).Select(r => (r.Strike, putMeasure(r))).ToList(),
                 Header = $"{date} · {dte} DTE · {n} opts",

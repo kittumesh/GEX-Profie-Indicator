@@ -101,7 +101,22 @@ namespace GexProfile
                     continue;
                 if (prev != 0 && Math.Sign(prev) != Math.Sign(cur))
                 {
-                    double flip = prevS + (s - prevS) * prev / (prev - cur);
+                    // Over the whole chain the grid is coarse, so narrow the bracket by bisection before interpolating.
+                    double a = prevS, b = s, fa = prev, fb = cur;
+                    for (int k = 0; k < 20 && b - a > 0.05; k++)
+                    {
+                        double m = 0.5 * (a + b), fm = Total(m);
+                        if (fm == 0)
+                        {
+                            a = b = m;
+                            break;
+                        }
+                        if (Math.Sign(fm) == Math.Sign(fa))
+                            (a, fa) = (m, fm);
+                        else
+                            (b, fb) = (m, fm);
+                    }
+                    double flip = a == b ? a : a + (b - a) * fa / (fa - fb);
                     if (double.IsNaN(best) || Math.Abs(flip - spot) < Math.Abs(best - spot))
                         best = flip;
                 }
