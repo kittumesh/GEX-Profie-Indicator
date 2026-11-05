@@ -202,7 +202,7 @@ namespace GexProfile
             public double StrikeStep;
             public double MaxPain;
             public double GammaFlip;
-            public double PeakGammaStrike, PeakGamma;
+            public double PeakGammaStrike;
             public List<(double strike, double value)> CallWalls, PutWalls;
             public string Header;
             public double TotalGex;
@@ -511,6 +511,7 @@ namespace GexProfile
                 {
                     sampleLogged = true;
                     LogSample();
+                    Log($"zero gamma {(double.IsNaN(snap.GammaFlip) ? "none (total GEX keeps one sign)" : snap.GammaFlip.ToString("0.0", CultureInfo.InvariantCulture))} searching {snap.Rows[0].Strike}–{snap.Rows[^1].Strike}, total GEX {GexMath.FormatGex(snap.TotalGex)}");
                 }
                 if (NeedsNextExpiry(snap))
                 {
@@ -644,7 +645,6 @@ namespace GexProfile
                 Header = $"{date} · {dte} DTE · {n} opts",
                 TotalGex = list.Sum(r => r.NetGex),
                 PeakGammaStrike = peak?.Strike ?? double.NaN,
-                PeakGamma = peak == null ? 0 : Math.Abs(peak.CallGex) + Math.Abs(peak.PutGex),
                 HasData = qty.Any(q => q > 0),
                 FirstExpiryUtc = first,
             };
@@ -957,21 +957,15 @@ namespace GexProfile
             var tags = new List<RectangleF>();
             using var font = new Font("Segoe UI", LabelTextSize);
             if (!double.IsNaN(snap.PeakGammaStrike))
-                DrawLevel(g, font, rect, conv, tags, snap.PeakGammaStrike, PeakGammaLine, PeakGammaLabel, $"PEAK GAMMA {FormatStrike(snap.PeakGammaStrike)} · {GexMath.FormatGex(snap.PeakGamma).TrimStart('+')}");
+                DrawLevel(g, font, rect, conv, tags, snap.PeakGammaStrike, PeakGammaLine, PeakGammaLabel, "PEAK GAMMA");
             for (int i = 0; i < snap.CallWalls.Count; i++)
-            {
-                var (strike, value) = snap.CallWalls[i];
-                DrawLevel(g, font, rect, conv, tags, strike, CallWallLine, CallWallLabel, i == 0 || WallLabels ? $"CALL WALL {FormatStrike(strike)} · {GexMath.FormatGex(value)}" : null);
-            }
+                DrawLevel(g, font, rect, conv, tags, snap.CallWalls[i].strike, CallWallLine, CallWallLabel, i == 0 || WallLabels ? "CALL WALL" : null);
             for (int i = 0; i < snap.PutWalls.Count; i++)
-            {
-                var (strike, value) = snap.PutWalls[i];
-                DrawLevel(g, font, rect, conv, tags, strike, PutWallLine, PutWallLabel, i == 0 || WallLabels ? $"PUT WALL {FormatStrike(strike)} · {GexMath.FormatGex(value)}" : null);
-            }
+                DrawLevel(g, font, rect, conv, tags, snap.PutWalls[i].strike, PutWallLine, PutWallLabel, i == 0 || WallLabels ? "PUT WALL" : null);
             if (!double.IsNaN(snap.MaxPain))
-                DrawLevel(g, font, rect, conv, tags, snap.MaxPain, MaxPainLine, MaxPainLabel, $"MAX PAIN {FormatStrike(snap.MaxPain)}");
+                DrawLevel(g, font, rect, conv, tags, snap.MaxPain, MaxPainLine, MaxPainLabel, "MAX PAIN");
             if (!double.IsNaN(snap.GammaFlip))
-                DrawLevel(g, font, rect, conv, tags, snap.GammaFlip, ZeroGammaLine, ZeroGammaLabel, $"ZERO GAMMA {snap.GammaFlip.ToString("0.0", CultureInfo.InvariantCulture)}");
+                DrawLevel(g, font, rect, conv, tags, snap.GammaFlip, ZeroGammaLine, ZeroGammaLabel, "ZERO GAMMA");
         }
 
         // Tags already drawn are in `tags`; a new tag that would overlap one is moved to its left.
@@ -1069,8 +1063,6 @@ namespace GexProfile
         private static Color Darken(Color c) => Color.FromArgb(c.R / 2, c.G / 2, c.B / 2);
 
         #endregion
-
-        private static string FormatStrike(double strike) => strike.ToString("0.##", CultureInfo.InvariantCulture);
 
         private void Log(string message) =>
             Core.Instance.Loggers.Log("[GEX Profile] " + message, LoggingLevel.System, Symbol?.Connection?.Name);

@@ -89,13 +89,17 @@ namespace GexProfile
                 return sum;
             }
 
+            // Far from every strike, short-dated gamma underflows to exactly 0; compare against the last non-zero
+            // point so a sign change across such a stretch is still found.
             double best = double.NaN;
             double step = (hi - lo) / (points - 1);
             double prevS = lo, prev = Total(lo);
             for (int i = 1; i < points; i++)
             {
                 double s = lo + i * step, cur = Total(s);
-                if (prev != 0 && cur != 0 && Math.Sign(prev) != Math.Sign(cur))
+                if (cur == 0)
+                    continue;
+                if (prev != 0 && Math.Sign(prev) != Math.Sign(cur))
                 {
                     double flip = prevS + (s - prevS) * prev / (prev - cur);
                     if (double.IsNaN(best) || Math.Abs(flip - spot) < Math.Abs(best - spot))
