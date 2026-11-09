@@ -11,7 +11,7 @@
 
     <!-- Quantower install. Override on the command line if yours differs: dotnet build -p:QuantowerVersion=v1.148.0 -->
     <QuantowerRoot Condition="'$(QuantowerRoot)' == ''">C:\Quantower</QuantowerRoot>
-    <QuantowerVersion Condition="'$(QuantowerVersion)' == ''">v1.147.9</QuantowerVersion>
+    <QuantowerVersion Condition="'$(QuantowerVersion)' == ''">v1.147.10</QuantowerVersion>
 
     <!-- Build straight into Quantower's indicator scripts folder so it shows up in the indicator list. -->
     <AppendTargetFrameworkToOutputPath>false</AppendTargetFrameworkToOutputPath>
