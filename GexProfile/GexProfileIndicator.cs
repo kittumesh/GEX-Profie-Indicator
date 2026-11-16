@@ -218,6 +218,8 @@ namespace GexProfile
         private Symbol underlying;
         private volatile Snapshot snapshot;
         private volatile string status;
+        // Set when the loaded options are not on the chart's futures contract; drawn as a second header line.
+        private volatile string warning;
         private bool sampleLogged;
         private DateTime loadedAt;
         private bool active;
@@ -268,6 +270,7 @@ namespace GexProfile
         private void StartLoad()
         {
             status = "Loading option chain…";
+            warning = null;
             sampleLogged = false;
             cts = new CancellationTokenSource();
             var token = cts.Token;
@@ -436,6 +439,9 @@ namespace GexProfile
                     loadedAt = DateTime.UtcNow;
                     timer = new Timer(_ => Tick(), null, 500, 1000);
                 }
+                warning = ContractWarning(chartSymbol, chains);
+                if (warning != null)
+                    Log(warning);
                 status = "Waiting for option data…";
                 Log($"subscribed to {newLegs.Count} options, multiplier {Multiplier(under, f)}");
             }
@@ -464,6 +470,27 @@ namespace GexProfile
                 return own.Count > 0 ? own : list;
             }
             return new List<OptionSerie>();
+        }
+
+        // Options priced off another futures month give levels offset from the chart (one month) or wrong gamma (mixed months).
+        // Contracts are identified the same way FindSeries matches them; options with no underlier info are not counted.
+        private static string ContractWarning(Symbol chartSymbol, List<(OptionSerie serie, List<Symbol> options)> chains)
+        {
+            var contracts = chains
+                .SelectMany(c => c.options.Select(o =>
+                {
+                    string id = !string.IsNullOrEmpty(c.serie.UnderlierId) ? c.serie.UnderlierId : o.Underlier?.Id;
+                    return (id, name: o.Underlier?.Name ?? id);
+                }))
+                .Where(u => !string.IsNullOrEmpty(u.id))
+                .GroupBy(u => u.id)
+                .Select(g => (id: g.Key, name: g.First().name))
+                .ToList();
+            if (contracts.Count > 1)
+                return $"Options span {string.Join(", ", contracts.Select(c => c.name))} · levels unreliable, chart one contract";
+            if (contracts.Count == 1 && contracts[0].id != chartSymbol.Id)
+                return $"Options are on {contracts[0].name}, chart is {chartSymbol.Name} · levels offset";
+            return null;
         }
 
         // The monthly series is the bare root ("OG"); weeklies carry a week number ("OG1", "G2M", …).
@@ -807,7 +834,7 @@ namespace GexProfile
         }
 
         // Two rows of small toggle buttons under the header, right-aligned with it.
-        private void DrawButtons(Graphics g, Rectangle rect)
+        private void DrawButtons(Graphics g, Rectangle rect, float offset)
         {
             if (!ModeButtons)
             {
@@ -816,7 +843,7 @@ namespace GexProfile
             }
             const float pad = 6, gap = 3, height = 16;
             float width = ButtonRows.SelectMany(r => r).Max(b => g.MeasureString(b.text, ButtonFont).Width) + 2 * pad;
-            float right = AxisX(rect) - 8, y = rect.Top + 30;
+            float right = AxisX(rect) - 8, y = rect.Top + 30 + offset;
             var boxes = new List<(ModeButton, RectangleF)>();
 
             using var activeFill = new SolidBrush(Color.FromArgb(200, Darken(StatusColor)));
@@ -869,10 +896,13 @@ namespace GexProfile
                 g.SetClip(rect);
 
                 var snap = snapshot;
+                var warn = warning;
+                DrawHeader(g, rect, AxisX(rect), warn, Color.Orange, line: 1);
+                float buttonsTop = warn == null ? 0 : HeaderLineHeight;
                 if (snap == null || snap.Rows.Count == 0)
                 {
                     DrawHeader(g, rect, AxisX(rect), status ?? "", Color.Orange);
-                    DrawButtons(g, rect);
+                    DrawButtons(g, rect, buttonsTop);
                     return;
                 }
 
@@ -883,7 +913,7 @@ namespace GexProfile
                     DrawHeader(g, rect, AxisX(rect), snap.Header + " · ", StatusColor, "Σ " + GexMath.FormatGex(snap.TotalGex), snap.TotalGex >= 0 ? PositiveTextColor : NegativeTextColor);
                 else
                     DrawHeader(g, rect, AxisX(rect), status ?? snap.Header, Color.Orange);
-                DrawButtons(g, rect);
+                DrawButtons(g, rect, buttonsTop);
             }
             finally
             {
@@ -1027,7 +1057,9 @@ namespace GexProfile
             _ => DashStyle.Solid,
         };
 
-        private static void DrawHeader(Graphics g, Rectangle rect, float right, string text, Color dot, string suffix = null, Color suffixColor = default)
+        private const float HeaderLineHeight = 20;
+
+        private static void DrawHeader(Graphics g, Rectangle rect, float right, string text, Color dot, string suffix = null, Color suffixColor = default, int line = 0)
         {
             if (string.IsNullOrEmpty(text))
                 return;
@@ -1036,7 +1068,7 @@ namespace GexProfile
             var size = g.MeasureString(text, HeaderFont, PointF.Empty, format);
             var suffixSize = suffix == null ? SizeF.Empty : g.MeasureString(suffix, HeaderFont, PointF.Empty, format);
             // Ends just left of the profile's centre line.
-            float x = Math.Max(rect.Left + 16, right - size.Width - suffixSize.Width - 8), y = rect.Top + 8;
+            float x = Math.Max(rect.Left + 16, right - size.Width - suffixSize.Width - 8), y = rect.Top + 8 + line * HeaderLineHeight;
             using (var dotBrush = new SolidBrush(dot))
                 g.FillEllipse(dotBrush, x - 12, y + size.Height / 2 - 3.5f, 7, 7);
             using (var brush = new SolidBrush(TextColor))

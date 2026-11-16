@@ -413,7 +413,7 @@ Diagnostic messages are written to the Quantower log, prefixed `[GEX Profile]`:
 **Requirements**
 
 - Windows, .NET SDK 10.
-- Quantower installed (default path `C:\Quantower`, built against version `v1.147.9`).
+- Quantower installed (default path `C:\Quantower`, built against version `v1.147.11`).
 - A connection that supplies the **option chain with open interest** for the futures contract (e.g. Rithmic for COMEX).
 
 **Build**
