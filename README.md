@@ -35,7 +35,7 @@ Everything is calculated live from the option quotes, open interest and volume t
 | **Zero gamma** | Line at the underlying price where total GEX for the whole chain changes sign (the gamma flip). |
 | **Max pain** | Line at the strike where option holders' total payout at expiry would be smallest. |
 | **Level tags** | Small coloured name tags ("CALL WALL", "PUT WALL 2", "MAX PAIN"…) under each level line. |
-| **Header** | Expiry date, days to expiry, number of options loaded, and Σ total GEX of the visible strikes. |
+| **Header** | Expiry date, days to expiry, number of options loaded, and Σ total GEX of the whole chain. |
 | **Mode buttons** | Two rows of buttons under the header for switching histogram type, data source and expiration. |
 
 The indicator draws in the chart background (behind the candles), on the main price panel.
@@ -101,7 +101,7 @@ These settings style the level tags.
 | Setting | Values | Default | What it does |
 |---|---|---|---|
 | **Expiration** | Auto (nearest) / This week / This month (to monthly OG) | **Auto** | Which expiries are loaded (see [4.3](#43-choosing-expiries)). *Auto*: only the nearest upcoming expiry. *This week*: every expiry up to the end of the nearest expiry's Monday–Friday week. *This month*: every expiry up to and including the next monthly expiry (the series without a week number, e.g. "OG"). |
-| **Strikes per side** | 1 – 500 | **30** | How many strikes above and below the current price are shown in the histogram. The histogram, walls, peak gamma and Σ total use this window. Max pain and zero gamma always use the whole chain. |
+| **Strikes per side** | 1 – 500 | **30** | How many strikes above and below the current price are shown in the histogram. The histogram, walls and peak gamma use this window. Max pain, zero gamma and Σ total always use the whole chain of the selected expiries. |
 | **Wide range (all strikes)** | on / off | **off** | When on, *Strikes per side* is ignored and every strike in the chain is used for the histogram, walls, peak gamma and Σ total. |
 
 Changing any setting in the settings window recalculates the indicator. Changing *Expiration* reloads the option chain.
@@ -239,14 +239,15 @@ GEX = ± Γ × quantity × multiplier × F² × 0.01
 - **Visible window** = *Strikes per side* strikes below the ATM strike, the ATM strike, and *Strikes per side* strikes above it (2N + 1 strikes, fewer at the edges of the chain). With *Wide range* on, it's every strike.
 - **Strike spacing** = the smallest gap between neighbouring strikes in the window. It's used for bar thickness.
 
+"Whole chain" means every strike of the expiries chosen by **Expiration** (Auto = nearest expiry, This week = up to the end of the nearest expiry's week, This month = up to the monthly OG). Switching Auto/Week/Month changes the chain, and with it max pain, zero gamma and Σ.
+
 | Uses the **visible window** | Uses the **whole chain** |
 |---|---|
 | Histogram bars, value labels | Max pain |
 | Call walls, put walls | Zero gamma |
-| Peak gamma | |
-| Σ total GEX in the header | |
+| Peak gamma | Σ total GEX in the header |
 
-Σ is kept on the visible window on purpose. It shows the balance of what's on screen, while zero gamma shows where the whole chain flips.
+Σ uses the whole chain so it agrees with zero gamma: when Σ is positive the price sits on the positive side of the flip, and vice versa.
 
 ### 5.8 Call walls and put walls
 
@@ -292,7 +293,7 @@ pain(P) = Σ over strikes K [ callQty(K) × max(0, P − K) + putQty(K) × max(0
 
 ### 5.12 Σ total GEX
 
-Σ is the sum of **net GEX of every strike in the visible window**. It's shown at the end of the header in green when ≥ 0 and red when negative.
+Σ is the sum of **net GEX of every strike in the whole chain** (all strikes of the expiries selected by **Expiration**), not just the visible window. It's shown at the end of the header in green when ≥ 0 and red when negative.
 
 ### 5.13 Number formatting
 
@@ -365,7 +366,7 @@ The header sits at the top of the chart and is right-aligned so it ends just lef
 | `+2` | Number of extra expiries loaded (Week/Month modes). Left out when only one is loaded. |
 | `2 DTE` | Days to the nearest expiry, counted in US Eastern calendar days (0 on expiry day). |
 | `1240 opts` | Number of option contracts loaded: calls and puts, all strikes, all loaded expiries. |
-| `Σ +85.3M` | Total net GEX of the visible window: green when ≥ 0, red when negative. |
+| `Σ +85.3M` | Total net GEX of the whole chain: green when ≥ 0, red when negative. |
 
 **Status messages** (orange dot) are shown while loading or when something is missing:
 

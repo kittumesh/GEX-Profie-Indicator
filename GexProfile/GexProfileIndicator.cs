@@ -677,7 +677,8 @@ namespace GexProfile
                 CallWalls = list.Where(r => callMeasure(r) > 0).OrderByDescending(callMeasure).Take(WallsPerSide).Select(r => (r.Strike, callMeasure(r))).ToList(),
                 PutWalls = list.Where(r => putMeasure(r) < 0).OrderBy(putMeasure).Take(WallsPerSide).Select(r => (r.Strike, putMeasure(r))).ToList(),
                 Header = $"{date} · {dte} DTE · {n} opts",
-                TotalGex = list.Sum(r => r.NetGex),
+                // Whole chain, like zero gamma — not just the strikes in view.
+                TotalGex = all.Sum(r => r.NetGex),
                 PeakGammaStrike = peak?.Strike ?? double.NaN,
                 HasData = qty.Any(q => q > 0),
                 FirstExpiryUtc = first,
